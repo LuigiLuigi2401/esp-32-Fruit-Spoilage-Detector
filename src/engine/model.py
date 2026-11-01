@@ -151,6 +151,11 @@ def contains_box(parent, child):
     
     return (px <= ccx <= px + pw) and (py <= ccy <= py + ph) and (pw * ph > cw * ch * 1.25)
 
+def is_valid_fruit_aspect_ratio(bw, bh):
+    """Filter out non-fruit line artifacts or extreme rectangular bars (wires, taskbars, edges)."""
+    ratio = float(bw) / float(bh)
+    return 0.25 <= ratio <= 3.8
+
 def extract_object_regions(bgr_frame, min_area=1000, max_objects=8):
     """
     Multi-Candidate Computer Vision Region Proposal Detector:
@@ -193,11 +198,13 @@ def extract_object_regions(bgr_frame, min_area=1000, max_objects=8):
                 # Ignore boxes taking up >85% of full frame (screen display frame)
                 if bw > w * 0.85 or bh > h * 0.85:
                     continue
+                # Ignore non-fruit geometric shapes (extreme thin lines / long bars)
+                if not is_valid_fruit_aspect_ratio(bw, bh):
+                    continue
                 candidate_boxes.append((x, y, bw, bh))
 
     if not candidate_boxes:
-        margin_x, margin_y = int(w * 0.15), int(h * 0.15)
-        return [(margin_x, margin_y, w - 2 * margin_x, h - 2 * margin_y)]
+        return []
 
     # Filter 1: Discard parent container boxes containing smaller valid child boxes
     filtered_containers = []
@@ -230,10 +237,11 @@ def extract_object_regions(bgr_frame, min_area=1000, max_objects=8):
 
 def detect_and_classify_multi_objects(bgr_frame, model=None, transform=None, device="cpu", confidence_threshold=60.0, min_area=1500, prob_histories=None):
     """
-    Two-Stage Multi-Object Detector:
-    1. Uses OpenCV contour localization to find object bounding boxes (ROI crops).
+    Two-Stage Multi-Object Detector with Out-Of-Distribution Non-Fruit Rejection:
+    1. Uses OpenCV contour localization & geometry filters to find object candidates.
     2. Batches all ROI crops and executes PyTorch classification in a SINGLE forward pass.
-    Returns: List of dicts [{ 'box': (x,y,w,h), 'class': str, 'confidence': float, 'is_fresh': bool/None }, ...]
+    3. Filters out low-confidence / low-margin non-fruit predictions.
+    Returns: List of dicts [{ 'box': (x,y,w,h), 'class': str, 'confidence': float, 'is_fresh': bool }, ...]
     """
     if bgr_frame is None or bgr_frame.size == 0:
         return []
@@ -292,21 +300,21 @@ def detect_and_classify_multi_objects(bgr_frame, model=None, transform=None, dev
         else:
             avg_probs = probs
 
+        sorted_probs = np.sort(avg_probs)
         pred_idx = int(np.argmax(avg_probs))
         conf_pct = float(avg_probs[pred_idx] * 100.0)
+        top_margin = float(sorted_probs[-1] - sorted_probs[-2])
 
-        if conf_pct < confidence_threshold:
-            pred_class = "Object Not Detected"
-            is_fresh = None
-        else:
+        # Reject Non-Fruit Objects: Require confidence >= threshold AND prediction margin >= 0.12
+        if conf_pct >= confidence_threshold and top_margin >= 0.12:
             pred_class = CLASS_NAMES[pred_idx]
             is_fresh = "Fresh" in pred_class
 
-        results.append({
-            'box': (x, y, bw, bh),
-            'class': pred_class,
-            'confidence': conf_pct,
-            'is_fresh': is_fresh
-        })
+            results.append({
+                'box': (x, y, bw, bh),
+                'class': pred_class,
+                'confidence': conf_pct,
+                'is_fresh': is_fresh
+            })
 
     return results
