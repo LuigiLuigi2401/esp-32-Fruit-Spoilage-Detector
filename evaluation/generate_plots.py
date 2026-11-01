@@ -12,9 +12,11 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATASET_DIR = os.path.join(BASE_DIR, "dataset")
+ROOT_DIR = os.path.dirname(BASE_DIR)
+sys.path.insert(0, ROOT_DIR)
+DATASET_DIR = os.path.join(ROOT_DIR, "dataset_official", "fruits-fresh-and-rotten-for-classification", "dataset")
 TEST_DIR = os.path.join(DATASET_DIR, "test")
-MODEL_SAVE_PATH = os.path.join(BASE_DIR, "fruit_classifier.pth")
+MODEL_SAVE_PATH = os.path.join(ROOT_DIR, "models", "fruit_classifier.pth")
 ARTIFACT_DIR = r"C:\Users\Dell\.gemini\antigravity\brain\23529b3d-8d1b-475d-9814-3acd373b3b56"
 
 DISPLAY_NAMES = [
@@ -26,34 +28,11 @@ DISPLAY_NAMES = [
     "Rotten Orange"
 ]
 
-class FruitModel(nn.Module):
-    def __init__(self, num_classes=6):
-        super().__init__()
-        weights = models.MobileNet_V2_Weights.DEFAULT
-        self.backbone = models.mobilenet_v2(weights=weights)
-        in_feats = self.backbone.classifier[1].in_features
-        self.features_extractor = self.backbone.features
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.classifier = nn.Sequential(
-            nn.Dropout(0.2),
-            nn.Linear(in_feats, 128),
-            nn.ReLU(),
-            nn.Linear(128, num_classes)
-        )
-
-    def extract_features(self, x):
-        x = self.features_extractor(x)
-        x = self.pool(x)
-        x = torch.flatten(x, 1)
-        return x
-
-    def forward(self, x):
-        feats = self.extract_features(x)
-        return self.classifier(feats)
+from src.engine.model import FruitCNN
 
 def run_plots():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = FruitModel(num_classes=6).to(device)
+    model = FruitCNN(num_classes=6).to(device)
     if os.path.exists(MODEL_SAVE_PATH):
         model.load_state_dict(torch.load(MODEL_SAVE_PATH, map_location=device))
     model.eval()
@@ -114,10 +93,17 @@ def run_plots():
     plt.legend(facecolor='#0f172a', edgecolor='#334155', labelcolor='#f8fafc', loc='upper right')
     plt.tight_layout()
 
-    out1_local = os.path.join(BASE_DIR, "classification_2d_plane.png")
-    out1_art = os.path.join(ARTIFACT_DIR, "classification_2d_plane.png")
-    plt.savefig(out1_local, dpi=150)
-    plt.savefig(out1_art, dpi=150)
+    out1_paths = [
+        os.path.join(ROOT_DIR, "classification_2d_plane.png"),
+        os.path.join(ARTIFACT_DIR, "classification_2d_plane.png"),
+        os.path.join(ROOT_DIR, "classification_2d_plane.svg"),
+        os.path.join(ARTIFACT_DIR, "classification_2d_plane.svg")
+    ]
+    for p in out1_paths:
+        try:
+            plt.savefig(p, dpi=150 if p.endswith('.png') else None, bbox_inches='tight')
+        except Exception as e:
+            print(f"[Warning] Could not save {p}: {e}")
     plt.close()
 
     # 2. Confusion Matrix Plot
@@ -138,13 +124,20 @@ def run_plots():
     ax.set_title(f"Confusion Matrix (Test Accuracy: {test_accuracy:.1f}%)", color='#38bdf8', fontsize=14, fontweight='bold', pad=20)
     plt.tight_layout()
 
-    out2_local = os.path.join(BASE_DIR, "confusion_matrix.png")
-    out2_art = os.path.join(ARTIFACT_DIR, "confusion_matrix.png")
-    plt.savefig(out2_local, dpi=150)
-    plt.savefig(out2_art, dpi=150)
+    out2_paths = [
+        os.path.join(ROOT_DIR, "confusion_matrix.png"),
+        os.path.join(ARTIFACT_DIR, "confusion_matrix.png"),
+        os.path.join(ROOT_DIR, "confusion_matrix.svg"),
+        os.path.join(ARTIFACT_DIR, "confusion_matrix.svg")
+    ]
+    for p in out2_paths:
+        try:
+            plt.savefig(p, dpi=150 if p.endswith('.png') else None, bbox_inches='tight')
+        except Exception as e:
+            print(f"[Warning] Could not save {p}: {e}")
     plt.close()
 
-    print("Successfully generated and saved plots to both local and artifact directories!")
+    print("Successfully generated and saved PNG and SVG vector plots to both local and artifact directories!")
 
 if __name__ == "__main__":
     run_plots()
