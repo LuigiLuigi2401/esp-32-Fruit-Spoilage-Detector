@@ -4,7 +4,7 @@
 [![OpenCV](https://img.shields.io/badge/OpenCV-4.8+-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)](https://opencv.org/)
 [![PyQt6](https://img.shields.io/badge/PyQt6-Modern%20UI-41CD52?style=for-the-badge&logo=qt&logoColor=white)](https://www.qt.io/)
 [![ESP32-CAM](https://img.shields.io/badge/Hardware-ESP32--CAM-000000?style=for-the-badge&logo=espressif&logoColor=white)](https://www.espressif.com/)
-[![License](https://img.shields.io/badge/License-MIT-blue.style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
 An end-to-end, real-time edge AI computer vision system for fruit freshness classification and spoilage detection. Powered by **ESP32-CAM** MJPEG video streaming, **OpenCV** multi-candidate region proposal, **PyTorch MobileNetV2** deep learning inference, and a modern **PyQt6** glassmorphic desktop application.
 
