@@ -93,10 +93,13 @@ def run_plots():
     plt.legend(facecolor='#0f172a', edgecolor='#334155', labelcolor='#f8fafc', loc='upper right')
     plt.tight_layout()
 
+    FIG_DIR = os.path.join(ROOT_DIR, "docs", "figures")
+    os.makedirs(FIG_DIR, exist_ok=True)
+
     out1_paths = [
-        os.path.join(ROOT_DIR, "classification_2d_plane.png"),
+        os.path.join(FIG_DIR, "classification_2d_plane.png"),
         os.path.join(ARTIFACT_DIR, "classification_2d_plane.png"),
-        os.path.join(ROOT_DIR, "classification_2d_plane.svg"),
+        os.path.join(FIG_DIR, "classification_2d_plane.svg"),
         os.path.join(ARTIFACT_DIR, "classification_2d_plane.svg")
     ]
     for p in out1_paths:
@@ -125,9 +128,9 @@ def run_plots():
     plt.tight_layout()
 
     out2_paths = [
-        os.path.join(ROOT_DIR, "confusion_matrix.png"),
+        os.path.join(FIG_DIR, "confusion_matrix.png"),
         os.path.join(ARTIFACT_DIR, "confusion_matrix.png"),
-        os.path.join(ROOT_DIR, "confusion_matrix.svg"),
+        os.path.join(FIG_DIR, "confusion_matrix.svg"),
         os.path.join(ARTIFACT_DIR, "confusion_matrix.svg")
     ]
     for p in out2_paths:

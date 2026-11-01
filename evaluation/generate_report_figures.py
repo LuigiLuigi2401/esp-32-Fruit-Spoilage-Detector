@@ -61,14 +61,20 @@ def generate_learning_curves_plot(epochs=20):
     plt.suptitle("ESP32-CAM AI Model Training Dynamics & Convergence Profile", color='#38bdf8', fontsize=15, fontweight='bold', y=1.02)
     plt.tight_layout()
 
+    FIG_DIR = os.path.join(ROOT_DIR, "docs", "figures")
+    os.makedirs(FIG_DIR, exist_ok=True)
+
     out_paths = [
-        os.path.join(ROOT_DIR, "learning_curves.png"),
+        os.path.join(FIG_DIR, "learning_curves.png"),
         os.path.join(ARTIFACT_DIR, "learning_curves.png"),
-        os.path.join(ROOT_DIR, "learning_curves.svg"),
+        os.path.join(FIG_DIR, "learning_curves.svg"),
         os.path.join(ARTIFACT_DIR, "learning_curves.svg")
     ]
     for p in out_paths:
-        plt.savefig(p, dpi=200 if p.endswith('.png') else None, bbox_inches='tight')
+        try:
+            plt.savefig(p, dpi=200 if p.endswith('.png') else None, bbox_inches='tight')
+        except Exception as e:
+            print(f"[Warning] {e}")
     plt.close()
     print(f"[SUCCESS] Generated learning curves plot (PNG + SVG) for {epochs} epochs.")
 
@@ -112,13 +118,16 @@ def generate_benchmark_bar_chart():
     fig.tight_layout()
 
     out_paths = [
-        os.path.join(ROOT_DIR, "resolution_benchmark.png"),
+        os.path.join(FIG_DIR, "resolution_benchmark.png"),
         os.path.join(ARTIFACT_DIR, "resolution_benchmark.png"),
-        os.path.join(ROOT_DIR, "resolution_benchmark.svg"),
+        os.path.join(FIG_DIR, "resolution_benchmark.svg"),
         os.path.join(ARTIFACT_DIR, "resolution_benchmark.svg")
     ]
     for p in out_paths:
-        plt.savefig(p, dpi=200 if p.endswith('.png') else None, bbox_inches='tight')
+        try:
+            plt.savefig(p, dpi=200 if p.endswith('.png') else None, bbox_inches='tight')
+        except Exception as e:
+            print(f"[Warning] {e}")
     plt.close()
     print("[SUCCESS] Generated resolution benchmark bar chart (PNG + SVG).")
 
