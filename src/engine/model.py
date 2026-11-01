@@ -120,9 +120,20 @@ def classify_fruit_frame(bgr_frame, model=None, transform=None, device="cpu", co
         print(f"[Inference Error] {e}")
         return "Error", 0.0, None
 
+def contains_box(parent, child):
+    """Returns True if parent box contains child box center and is significantly larger."""
+    px, py, pw, ph = parent
+    cx, cy, cw, ch = child
+    
+    ccx = cx + cw / 2.0
+    ccy = cy + ch / 2.0
+    
+    return (px <= ccx <= px + pw) and (py <= ccy <= py + ph) and (pw * ph > cw * ch * 1.25)
+
 def extract_object_regions(bgr_frame, min_area=1500, max_objects=8):
     """
-    Uses OpenCV HSV color thresholding + Adaptive Otsu binarization to detect fruit object contours.
+    Uses OpenCV Multi-level Contour Retrieval & Canny Edge Gradients to detect
+    individual objects (including multiple images on PC screens, paper sheets, and trays).
     Returns a list of bounding boxes [(x, y, w, h), ...]
     """
     if bgr_frame is None or bgr_frame.size == 0:
@@ -134,45 +145,60 @@ def extract_object_regions(bgr_frame, min_area=1500, max_objects=8):
     hsv = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
     
-    # Blur to smooth image noise
+    # Blur to smooth image noise & screen reflections
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Compute adaptive threshold based on scene mean brightness
+    # 1. Canny Edge Detection (Ideal for separating multiple objects on screens/paper)
+    edges = cv2.Canny(blurred, 30, 120)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    edges_closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+
+    # 2. Adaptive Intensity Threshold
     mean_val = float(np.mean(blurred))
     if mean_val < 120:
-        # Dark background, bright foreground objects
         _, thresh = cv2.threshold(blurred, int(max(10, mean_val + 15)), 255, cv2.THRESH_BINARY)
     else:
-        # Light background, darker foreground objects
         _, thresh = cv2.threshold(blurred, int(min(245, mean_val - 15)), 255, cv2.THRESH_BINARY_INV)
 
-    # Saturation mask: Fruits are colorful/saturated (Saturation >= 25)
+    # 3. Saturation Mask (Fruits are colorful/saturated)
     sat_mask = cv2.inRange(hsv, (0, 25, 20), (180, 255, 255))
-
-    # Morphological closing to clean noise
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    thresh_closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
     sat_closed = cv2.morphologyEx(sat_mask, cv2.MORPH_CLOSE, kernel)
 
     # Combine masks
-    combined_mask = cv2.bitwise_or(thresh_closed, sat_closed)
+    combined_mask = cv2.bitwise_or(edges_closed, thresh)
+    combined_mask = cv2.bitwise_or(combined_mask, sat_closed)
 
-    # Find external contours
-    contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Find ALL contours (RETR_TREE finds inner child contours on screens & trays)
+    contours, _ = cv2.findContours(combined_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-    boxes = []
+    raw_boxes = []
     for cnt in contours:
         area = cv2.contourArea(cnt)
         if area >= min_area:
             x, y, bw, bh = cv2.boundingRect(cnt)
             
-            # Ignore bounding boxes taking up >95% of full frame (background artifact)
-            if bw > w * 0.95 and bh > h * 0.95:
+            # Ignore bounding boxes taking up >90% of full frame (outer screen border)
+            if bw > w * 0.90 and bh > h * 0.90:
                 continue
 
-            boxes.append((x, y, bw, bh))
+            raw_boxes.append((x, y, bw, bh))
 
-    # Sort bounding boxes by area (largest first) and limit to max_objects
+    # Filter out parent container boxes (e.g. outer monitor display containing 2 inner fruit cards)
+    if len(raw_boxes) > 1:
+        filtered_boxes = []
+        for i, b1 in enumerate(raw_boxes):
+            is_container = False
+            for j, b2 in enumerate(raw_boxes):
+                if i != j and contains_box(b1, b2):
+                    is_container = True
+                    break
+            if not is_container:
+                filtered_boxes.append(b1)
+        boxes = filtered_boxes if filtered_boxes else raw_boxes
+    else:
+        boxes = raw_boxes
+
+    # Sort bounding boxes by area descending and limit to max_objects
     boxes = sorted(boxes, key=lambda b: b[2] * b[3], reverse=True)[:max_objects]
 
     # Fallback: If no contour found above min_area, return central 70% region
