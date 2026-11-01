@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32-CAM AI Fruit Spoilage Detector</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --accent-blue: #38bdf8;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --accent-amber: #f59e0b;
+            --text-main: #f8fafc;
+            --text-sub: #94a3b8;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: 16px;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.12) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(34, 197, 94, 0.1) 0px, transparent 50%);
+        }
+
+        /* Header Bar */
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            padding: 14px 24px;
+            border-radius: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-icon {
+            font-size: 26px;
+            background: rgba(56, 189, 248, 0.15);
+            padding: 8px;
+            border-radius: 12px;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+        }
+
+        .brand-title {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #f8fafc 0%, #38bdf8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-stats {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .pill {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--card-border);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .pill-green { color: var(--accent-green); border-color: rgba(34, 197, 94, 0.3); }
+        .pill-blue { color: var(--accent-blue); border-color: rgba(56, 189, 248, 0.3); }
+        .pill-amber { color: var(--accent-amber); border-color: rgba(245, 158, 11, 0.3); }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            box-shadow: 0 0 10px var(--accent-green);
+        }
+
+        /* Layout Grid */
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 340px;
+            gap: 16px;
+            flex: 1;
+        }
+
+        @media (max-width: 900px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Video Canvas Container */
+        .video-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+            min-height: 420px;
+        }
+
+        .video-frame-wrap {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--card-border);
+            background: #000;
+        }
+
+        .video-frame-wrap img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .video-overlay-badge {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(8px);
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--card-border);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Sidebar Control Panel */
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .panel-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 18px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+        }
+
+        .panel-title {
+            font-size: 15px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-sub);
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        /* Forms & Inputs */
+        .input-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--card-border);
+            padding: 10px 14px;
+            border-radius: 10px;
+            color: var(--text-main);
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        input[type="text"]:focus {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+        }
+
+        button {
+            background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
+        }
+
+        button.btn-green {
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+        }
+
+        button.btn-green:hover {
+            box-shadow: 0 4px 14px rgba(22, 163, 74, 0.4);
+        }
+
+        /* Sliders */
+        .control-row {
+            margin-bottom: 14px;
+        }
+
+        .control-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            color: var(--text-sub);
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent-blue);
+            height: 6px;
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 3px;
+            outline: none;
+        }
+
+        /* Class Distribution Cards */
+        .class-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .class-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        .badge-fresh {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--accent-green);
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 12px;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .badge-rotten {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 12px;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Bar -->
+    <header>
+        <div class="brand">
+            <div class="brand-icon">🍎</div>
+            <div>
+                <div class="brand-title">ESP32-CAM AI Detector</div>
+                <div style="font-size: 12px; color: var(--text-sub);">Network Server: <span style="color: var(--accent-blue); font-family: monospace;">http://{{ local_ip }}:5000</span></div>
+            </div>
+        </div>
+
+        <div class="header-stats">
+            <div class="pill pill-green" id="statusPill">
+                <span class="status-dot"></span> <span id="statusText">LIVE</span>
+            </div>
+            <div class="pill pill-blue">
+                FPS: <span id="fpsVal">0.0</span>
+            </div>
+            <div class="pill pill-amber">
+                Objects: <span id="objCount">0</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <div class="container">
+        <!-- Live Video Stream -->
+        <div class="video-card">
+            <div class="video-frame-wrap">
+                <img src="/video_feed" id="videoStream" alt="ESP32 Live Video Stream">
+                <div class="video-overlay-badge">
+                    <span id="camHostBadge">http://{{ esp32_ip }}</span>
+                </div>
+            </div>
+            <div style="margin-top: 14px; display: flex; gap: 12px;">
+                <button class="btn-green" onclick="takeSnapshot()">📸 Capture Snapshot</button>
+                <button onclick="toggleLedFlash()">💡 Toggle Flash LED</button>
+            </div>
+        </div>
+
+        <!-- Sidebar Control Panel -->
+        <div class="sidebar">
+            <!-- Hardware Connection -->
+            <div class="panel-card">
+                <div class="panel-title">ESP32 Connection</div>
+                <div class="input-group">
+                    <input type="text" id="ipInput" value="{{ esp32_ip }}" placeholder="ESP32 IP Address">
+                    <button onclick="updateConfig()">Connect</button>
+                </div>
+            </div>
+
+            <!-- Vision Engine Controls -->
+            <div class="panel-card">
+                <div class="panel-title">Vision Controls</div>
+                
+                <div class="control-row">
+                    <div class="control-label">
+                        <span>Min Object Size (px²)</span>
+                        <span id="minSizeVal" style="color: var(--accent-blue); font-family: monospace;">800</span>
+                    </div>
+                    <input type="range" id="minSizeSlider" min="200" max="3000" step="50" value="800" oninput="onSliderChange()">
+                </div>
+
+                <div class="control-row">
+                    <div class="control-label">
+                        <span>Confidence Threshold</span>
+                        <span id="confVal" style="color: var(--accent-blue); font-family: monospace;">50%</span>
+                    </div>
+                    <input type="range" id="confSlider" min="0.20" max="0.95" step="0.05" value="0.50" oninput="onSliderChange()">
+                </div>
+            </div>
+
+            <!-- Real-Time Classification Breakdown -->
+            <div class="panel-card">
+                <div class="panel-title">Detected Objects</div>
+                <div class="class-list" id="classList">
+                    <div style="color: var(--text-sub); font-size: 13px; text-align: center; padding: 12px;">
+                        Scanning camera feed...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JS Logic -->
+    <script>
+        function updateConfig() {
+            const ip = document.getElementById('ipInput').value;
+            fetch('/api/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({esp32_ip: ip})
+            }).then(r => r.json()).then(data => {
+                document.getElementById('camHostBadge').innerText = "http://" + data.esp32_ip;
+            });
+        }
+
+        function toggleLedFlash() {
+            fetch('/api/status').then(r => r.json()).then(st => {
+                fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({flash_led: !st.flash_led})
+                });
+            });
+        }
+
+        function onSliderChange() {
+            const minArea = document.getElementById('minSizeSlider').value;
+            const conf = document.getElementById('confSlider').value;
+            
+            document.getElementById('minSizeVal').innerText = minArea;
+            document.getElementById('confVal').innerText = Math.round(conf * 100) + '%';
+
+            fetch('/api/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({min_obj_size: parseInt(minArea), conf_threshold: parseFloat(conf)})
+            });
+        }
+
+        function takeSnapshot() {
+            fetch('/api/snapshot', {method: 'POST'})
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'ok') {
+                        alert('📸 Snapshot saved: ' + data.filename);
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                });
+        }
+
+        // Poll status every 800ms
+        setInterval(() => {
+            fetch('/api/status')
+                .then(r => r.json())
+                .then(st => {
+                    document.getElementById('fpsVal').innerText = st.fps;
+                    document.getElementById('objCount').innerText = st.object_count;
+                    
+                    const statusPill = document.getElementById('statusPill');
+                    const statusText = document.getElementById('statusText');
+                    
+                    if (st.connected) {
+                        statusPill.className = "pill pill-green";
+                        statusText.innerText = "LIVE";
+                    } else {
+                        statusPill.className = "pill pill-amber";
+                        statusText.innerText = "OFFLINE";
+                    }
+
+                    // Render detected object list
+                    const listElem = document.getElementById('classList');
+                    if (!st.detected_objects || st.detected_objects.length === 0) {
+                        listElem.innerHTML = '<div style="color: var(--text-sub); font-size: 13px; text-align: center; padding: 12px;">No objects localized</div>';
+                    } else {
+                        let html = '';
+                        st.detected_objects.forEach(item => {
+                            const isFresh = item.label.includes('Fresh');
+                            const badgeClass = isFresh ? 'badge-fresh' : 'badge-rotten';
+                            html += `
+                                <div class="class-item">
+                                    <span>${item.label}</span>
+                                    <span class="${badgeClass}">${Math.round(item.conf * 100)}%</span>
+                                </div>
+                            `;
+                        });
+                        listElem.innerHTML = html;
+                    }
+                })
+                .catch(err => console.error("Poll error:", err));
+        }, 800);
+    </script>
+</body>
+</html>

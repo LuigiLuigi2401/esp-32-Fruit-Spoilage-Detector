@@ -104,21 +104,22 @@ esp-32-Fruit-Spoilage-Detector/
 3. Select board **AI Thinker ESP32-CAM** and flash the firmware.
 4. Note the IP address printed in the Serial Monitor (e.g. `http://192.168.1.100`).
 
-### 2. Desktop Software Setup
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/LuigiLuigi2401/esp-32-Fruit-Spoilage-Detector.git
-   cd esp-32-Fruit-Spoilage-Detector
-   ```
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Launch the application:
-   ```bash
-   python main.py
-   ```
-4. Enter the ESP32-CAM IP address in the GUI top bar and click **Connect**.
+### 2. Desktop & Web Application Launch
+
+#### Option A: Modern Desktop Application (PyQt6)
+Launch the desktop application:
+```bash
+python main.py
+```
+
+#### Option B: Network Web Application (Flask - Access Anywhere on Local Network)
+Launch the web server to access the live camera feed and controls from **any device (phone, tablet, iPad, PC)** on your local Wi-Fi network:
+```bash
+python web_main.py
+```
+Open your browser and navigate to:
+* **Local Computer**: `http://localhost:5000`
+* **Mobile / Other Devices**: `http://192.168.1.17:5000` (Use the local IP displayed in the terminal output)
 
 ---
 
