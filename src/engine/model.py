@@ -249,7 +249,7 @@ def detect_and_classify_multi_objects(bgr_frame, model=None, transform=None, dev
     if transform is None:
         transform = get_default_transform()
 
-    boxes = extract_object_regions(bgr_frame, min_area=min_area)
+    boxes = extract_object_regions(bgr_frame, min_area=min_area, max_objects=4)
     if not boxes or model is None:
         return []
 
