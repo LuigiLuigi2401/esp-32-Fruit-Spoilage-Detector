@@ -45,7 +45,7 @@ except ImportError:
     from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
     from PyQt6.QtGui import QImage, QPixmap, QFont, QColor
 
-from model import FruitCNN, CLASS_NAMES, classify_fruit_frame
+from src.engine.model import FruitCNN, CLASS_NAMES, classify_fruit_frame
 
 # ESP32 Configuration
 ESP32_IP = "192.168.1.21"
@@ -53,7 +53,7 @@ STREAM_URL = f"http://{ESP32_IP}/stream"
 CONTROL_URL = f"http://{ESP32_IP}/control"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "fruit_classifier.pth")
+MODEL_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "..", "models", "fruit_classifier.pth"))
 
 FRUIT_EMOJIS = {
     "Fresh Apple": "🍎 Fresh Apple",
@@ -673,8 +673,11 @@ class FruitDetectorGUI(QMainWindow):
             self.worker.stop()
         event.accept()
 
-if __name__ == "__main__":
+def main():
     app = QApplication(sys.argv)
     window = FruitDetectorGUI()
     window.show()
     sys.exit(app.exec_() if hasattr(app, 'exec_') else app.exec())
+
+if __name__ == "__main__":
+    main()

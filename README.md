@@ -26,24 +26,43 @@ A real-time edge AI vision system powered by **ESP32-CAM** and a **Custom PyTorc
 
 ### 1. Install Dependencies
 ```bash
-pip install torch torchvision opencv-python pyqt5 requests numpy pillow
+pip install -r requirements.txt
 ```
 
-### 2. Launch Application
+### 2. Launch Desktop Application
 ```bash
-python gui_app.py
+python main.py
 ```
 
 ---
 
-## 📁 Repository Structure
+## 📁 Project Architecture
 
 ```
-├── gui_app.py                       # Main Glassmorphism PyQt GUI Application
-├── model.py                         # PyTorch FruitCNN Architecture & Inference Engine
-├── train_on_official_kaggle.py     # Deep Learning Training Script
-├── fruit_classifier.pth             # Trained PyTorch Model Weights (~14.9 MB)
-├── generate_plots.py                # Visual Analytics & Learning Curves Generator
-├── classification_2d_plane.png      # High-dimensional Feature Decision Boundary
-└── confusion_matrix.png             # Multiclass Classification Evaluation Matrix
+esp-32-Fruit-Spoilage-Detector/
+├── main.py                             # Root Application Launcher
+├── requirements.txt                    # Project Dependencies
+├── README.md                           # Documentation
+├── firmware/                           # ESP32-CAM Hardware Firmware
+│   └── ESP32Cam_WebServer/
+│       └── ESP32Cam_WebServer.ino      # C++ Arduino WebServer & Stream Sketch
+├── models/                             # Deep Learning Weights & Checkpoints
+│   └── fruit_classifier.pth            # Trained PyTorch Model (~14.9 MB)
+├── src/                                # Core Source Code Package
+│   ├── app/                            # PyQt Application Components
+│   │   ├── gui_app.py                  # Glassmorphism PyQt Studio App
+│   │   └── cli_app.py                  # Lightweight Terminal Vision App
+│   ├── engine/                         # Deep Learning Engine
+│   │   └── model.py                    # PyTorch CNN Architecture & Inference
+│   └── utils/                          # Stream & Network Helpers
+├── training/                           # Dataset Preparation & Model Training
+│   ├── train_classifier.py             # Primary Deep Learning Training Pipeline
+│   ├── benchmark_models.py             # Accuracy & Latency Benchmarks
+│   ├── download_real_photos_and_train.py
+│   └── ultra_fast_robust_train.py
+└── evaluation/                         # Model Analytics, Plots & Validation
+    ├── generate_plots.py               # Visual Analytics Generator
+    ├── classification_2d_plane.png     # Decision Boundary Map
+    ├── confusion_matrix.png            # Multiclass Evaluation Matrix
+    └── learning_curves.png             # Training & Validation Curves
 ```
