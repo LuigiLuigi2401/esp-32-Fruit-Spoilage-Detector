@@ -25,8 +25,8 @@ app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"), stati
 # Global State
 class WebStreamEngine:
     def __init__(self):
-        self.esp32_ip = "192.168.1.100"
-        self.stream_url = f"http://{self.esp32_ip}:81/stream"
+        self.esp32_ip = "192.168.1.21"
+        self.stream_url = f"http://{self.esp32_ip}/stream"
         self.is_connected = False
         self.min_obj_size = 800
         self.conf_threshold = 0.50
@@ -49,11 +49,15 @@ class WebStreamEngine:
 
     def set_esp32_ip(self, ip):
         self.esp32_ip = ip.strip()
-        self.stream_url = f"http://{self.esp32_ip}:81/stream" if ":81" not in self.esp32_ip else f"http://{self.esp32_ip}"
-        if not self.stream_url.startswith("http://"):
-            self.stream_url = "http://" + self.stream_url
-        if not self.stream_url.endswith("/stream"):
-            self.stream_url = self.stream_url.rstrip("/") + "/stream"
+        ip_clean = self.esp32_ip.replace("http://", "").replace("https://", "").rstrip("/")
+        if "/stream" in ip_clean:
+            self.stream_url = f"http://{ip_clean}"
+        else:
+            self.stream_url = f"http://{ip_clean}/stream"
+        
+        # Extract base IP for controls
+        base_host = ip_clean.split(":")[0].split("/")[0]
+        self.esp32_ip = base_host
         self.tracker.tracked_objects = []
 
     def toggle_flash_led(self, state=None):
