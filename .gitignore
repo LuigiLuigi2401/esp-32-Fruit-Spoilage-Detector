@@ -1,0 +1,30 @@
+# Byte-compiled / Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Kaggle Credentials & API Keys
+kaggle.json
+
+# Datasets & Heavy Image Directories
+/dataset/
+/dataset_official/
+/kaggle_dataset/
+/kaggle_official/
+/real_dataset/
+*.zip
+*.tar.gz
+
+# Virtual Environments
+.venv/
+env/
+venv/
+ENV/
+ENV/build/
+
+# IDE & OS System Files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
