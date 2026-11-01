@@ -119,3 +119,148 @@ def classify_fruit_frame(bgr_frame, model=None, transform=None, device="cpu", co
     except Exception as e:
         print(f"[Inference Error] {e}")
         return "Error", 0.0, None
+
+def extract_object_regions(bgr_frame, min_area=1500, max_objects=8):
+    """
+    Uses OpenCV HSV color thresholding + Adaptive Otsu binarization to detect fruit object contours.
+    Returns a list of bounding boxes [(x, y, w, h), ...]
+    """
+    if bgr_frame is None or bgr_frame.size == 0:
+        return []
+
+    h, w, _ = bgr_frame.shape
+
+    # Convert to HSV & Grayscale for robust foreground object segmentation
+    hsv = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
+    
+    # Blur to smooth image noise
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # Compute adaptive threshold based on scene mean brightness
+    mean_val = float(np.mean(blurred))
+    if mean_val < 120:
+        # Dark background, bright foreground objects
+        _, thresh = cv2.threshold(blurred, int(max(10, mean_val + 15)), 255, cv2.THRESH_BINARY)
+    else:
+        # Light background, darker foreground objects
+        _, thresh = cv2.threshold(blurred, int(min(245, mean_val - 15)), 255, cv2.THRESH_BINARY_INV)
+
+    # Saturation mask: Fruits are colorful/saturated (Saturation >= 25)
+    sat_mask = cv2.inRange(hsv, (0, 25, 20), (180, 255, 255))
+
+    # Morphological closing to clean noise
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    thresh_closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    sat_closed = cv2.morphologyEx(sat_mask, cv2.MORPH_CLOSE, kernel)
+
+    # Combine masks
+    combined_mask = cv2.bitwise_or(thresh_closed, sat_closed)
+
+    # Find external contours
+    contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    boxes = []
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area >= min_area:
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            
+            # Ignore bounding boxes taking up >95% of full frame (background artifact)
+            if bw > w * 0.95 and bh > h * 0.95:
+                continue
+
+            boxes.append((x, y, bw, bh))
+
+    # Sort bounding boxes by area (largest first) and limit to max_objects
+    boxes = sorted(boxes, key=lambda b: b[2] * b[3], reverse=True)[:max_objects]
+
+    # Fallback: If no contour found above min_area, return central 70% region
+    if not boxes:
+        margin_x, margin_y = int(w * 0.15), int(h * 0.15)
+        boxes = [(margin_x, margin_y, w - 2 * margin_x, h - 2 * margin_y)]
+
+    return boxes
+
+def detect_and_classify_multi_objects(bgr_frame, model=None, transform=None, device="cpu", confidence_threshold=60.0, min_area=1500, prob_histories=None):
+    """
+    Two-Stage Multi-Object Detector:
+    1. Uses OpenCV contour localization to find object bounding boxes (ROI crops).
+    2. Batches all ROI crops and executes PyTorch classification in a SINGLE forward pass.
+    Returns: List of dicts [{ 'box': (x,y,w,h), 'class': str, 'confidence': float, 'is_fresh': bool/None }, ...]
+    """
+    if bgr_frame is None or bgr_frame.size == 0:
+        return []
+
+    if transform is None:
+        transform = get_default_transform()
+
+    boxes = extract_object_regions(bgr_frame, min_area=min_area)
+    if not boxes or model is None:
+        return []
+
+    rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+    h, w, _ = rgb_frame.shape
+
+    roi_tensors = []
+    valid_boxes = []
+
+    for i, (x, y, bw, bh) in enumerate(boxes):
+        # Add 10% padding around bounding box for context
+        pad_x = int(bw * 0.1)
+        pad_y = int(bh * 0.1)
+
+        x1 = max(0, x - pad_x)
+        y1 = max(0, y - pad_y)
+        x2 = min(w, x + bw + pad_x)
+        y2 = min(h, y + bh + pad_y)
+
+        crop = rgb_frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            continue
+
+        pil_crop = Image.fromarray(crop)
+        roi_tensor = transform(pil_crop)
+        roi_tensors.append(roi_tensor)
+        valid_boxes.append((x, y, bw, bh))
+
+    if not roi_tensors:
+        return []
+
+    # Stack all ROI crops into a single batched tensor for ultra-fast CPU inference!
+    batch_tensor = torch.stack(roi_tensors).to(device)
+
+    results = []
+    model.eval()
+    with torch.no_grad():
+        logits = model(batch_tensor)
+        probs_batch = F.softmax(logits, dim=1).cpu().numpy()
+
+    for i, (x, y, bw, bh) in enumerate(valid_boxes):
+        probs = probs_batch[i]
+
+        # Optional temporal smoothing per box index
+        if prob_histories is not None and i in prob_histories:
+            prob_histories[i].append(probs)
+            avg_probs = np.mean(prob_histories[i], axis=0)
+        else:
+            avg_probs = probs
+
+        pred_idx = int(np.argmax(avg_probs))
+        conf_pct = float(avg_probs[pred_idx] * 100.0)
+
+        if conf_pct < confidence_threshold:
+            pred_class = "Object Not Detected"
+            is_fresh = None
+        else:
+            pred_class = CLASS_NAMES[pred_idx]
+            is_fresh = "Fresh" in pred_class
+
+        results.append({
+            'box': (x, y, bw, bh),
+            'class': pred_class,
+            'confidence': conf_pct,
+            'is_fresh': is_fresh
+        })
+
+    return results

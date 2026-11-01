@@ -45,7 +45,7 @@ except ImportError:
     from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
     from PyQt6.QtGui import QImage, QPixmap, QFont, QColor
 
-from src.engine.model import FruitCNN, CLASS_NAMES, classify_fruit_frame
+from src.engine.model import FruitCNN, CLASS_NAMES, classify_fruit_frame, detect_and_classify_multi_objects
 
 # ESP32 Configuration
 ESP32_IP = "192.168.1.21"
@@ -84,7 +84,6 @@ def send_async_control(var_name, val):
             res = requests.get(url, headers=headers, timeout=0.8)
             print(f"[Async Control] {var_name}={val} -> HTTP {res.status_code}")
         except Exception as e:
-            # Re-try once with brief delay if socket busy
             try:
                 time.sleep(0.1)
                 requests.get(url, headers=headers, timeout=0.8)
@@ -95,17 +94,18 @@ def send_async_control(var_name, val):
     threading.Thread(target=worker, daemon=True).start()
 
 class StreamWorker(QThread):
-    """Background worker thread executing zero-latency MJPEG stream parsing & PyTorch AI inference."""
-    frame_processed = pyqtSignal(np.ndarray, str, float, object, float)
+    """Background worker thread executing zero-latency MJPEG stream parsing & Batched PyTorch AI inference."""
+    frame_processed = pyqtSignal(np.ndarray, list, float) # frame, results_list, fps
     connection_status = pyqtSignal(bool, str)
 
-    def __init__(self, stream_url=STREAM_URL, model_path=MODEL_PATH, confidence_threshold=60.0, smoothing_window=10):
+    def __init__(self, stream_url=STREAM_URL, model_path=MODEL_PATH, confidence_threshold=60.0, min_object_size=1500, smoothing_window=10):
         super().__init__()
         self.stream_url = stream_url
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
+        self.min_object_size = min_object_size
         self.smoothing_window = max(1, int(smoothing_window))
-        self.prob_history = deque(maxlen=self.smoothing_window)
+        self.prob_histories = {}
         self.running = True
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.transform = get_inference_transform()
@@ -115,7 +115,7 @@ class StreamWorker(QThread):
     def set_smoothing_window(self, window_size):
         """Update rolling probability window size for temporal anti-jitter smoothing."""
         self.smoothing_window = max(1, int(window_size))
-        self.prob_history = deque(maxlen=self.smoothing_window)
+        self.prob_histories = {}
 
     def queue_control(self, var_name, val):
         """Queue control command to execute immediately on stream thread by interleaving socket access."""
@@ -206,18 +206,16 @@ class StreamWorker(QThread):
                                 frame_count = 0
                                 fps_start = time.time()
 
-                            # PyTorch Deep Neural Network Classification with Temporal Probability Averaging
-                            pred_class, confidence_pct, is_fresh = classify_fruit_frame(
+                            # Batched OpenCV Contour Localization + PyTorch Deep Neural Network Classification
+                            results = detect_and_classify_multi_objects(
                                 frame, self.model, self.transform, self.device,
                                 confidence_threshold=self.confidence_threshold,
-                                prob_history=self.prob_history
+                                min_area=self.min_object_size,
+                                prob_histories=self.prob_histories
                             )
 
-                            # Emit frame & real-time inference result
-                            self.frame_processed.emit(frame, pred_class, confidence_pct, is_fresh, fps)
-
-                            # Emit frame & real-time inference result
-                            self.frame_processed.emit(frame, pred_class, confidence_pct, is_fresh, fps)
+                            # Emit frame & multi-object detection results
+                            self.frame_processed.emit(frame, results, fps)
 
             except Exception as e:
                 if self.running and not self.pending_controls:
@@ -350,6 +348,10 @@ class FruitDetectorGUI(QMainWindow):
         header_layout.addStretch()
 
         # Status Pills
+        self.pill_count = QLabel("📦 Objects: 0")
+        self.pill_count.setStyleSheet("background-color: #1e293b; color: #38bdf8; border: 1px solid #0284c7; padding: 6px 14px; border-radius: 20px; font-weight: 700; font-size: 12px;")
+        header_layout.addWidget(self.pill_count)
+
         self.pill_model = QLabel("🧠 PyTorch MobileNetV2 (98.3%)")
         self.pill_model.setStyleSheet("background-color: #1e1b4b; color: #a7f3d0; border: 1px solid #312e81; padding: 6px 14px; border-radius: 20px; font-weight: 700; font-size: 12px;")
         header_layout.addWidget(self.pill_model)
@@ -516,6 +518,31 @@ class FruitDetectorGUI(QMainWindow):
         slider_smooth_layout.addWidget(self.lbl_smooth_val)
         layout_ctrl.addLayout(slider_smooth_layout)
 
+        # Min Object Size Sensitivity Slider
+        lbl_size = QLabel("Min Object Size (px²):")
+        lbl_size.setStyleSheet("font-size: 13px; font-weight: 600; color: #cbd5e1; margin-top: 4px;")
+        layout_ctrl.addWidget(lbl_size)
+
+        slider_size_layout = QHBoxLayout()
+        self.slider_size = QSlider(Qt.Orientation.Horizontal if hasattr(Qt, 'Orientation') else Qt.Horizontal)
+        self.slider_size.setRange(500, 8000)
+        self.slider_size.setValue(1500)
+        self.slider_size.setSingleStep(250)
+        self.slider_size.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #1e293b; border-radius: 3px; }
+            QSlider::sub-page:horizontal { background: #a855f7; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #f8fafc; width: 16px; margin-top: -5px; margin-bottom: -5px; border-radius: 8px; }
+        """)
+
+        self.lbl_size_val = QLabel("1500 px²")
+        self.lbl_size_val.setStyleSheet("font-weight: 800; color: #a855f7; font-size: 13px; min-width: 65px;")
+
+        self.slider_size.valueChanged.connect(self.on_min_size_changed)
+
+        slider_size_layout.addWidget(self.slider_size)
+        slider_size_layout.addWidget(self.lbl_size_val)
+        layout_ctrl.addLayout(slider_size_layout)
+
         # Flash LED Button (Instant Response)
         self.btn_flash = QPushButton("💡 FLASH LED: OFF")
         self.btn_flash.setObjectName("btnFlashOff")
@@ -556,6 +583,12 @@ class FruitDetectorGUI(QMainWindow):
         if hasattr(self, 'worker'):
             self.worker.set_smoothing_window(val)
 
+    def on_min_size_changed(self, val):
+        self.min_object_size = val
+        self.lbl_size_val.setText(f"{val} px²")
+        if hasattr(self, 'worker'):
+            self.worker.min_object_size = val
+
     def start_stream(self):
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.stop()
@@ -565,6 +598,7 @@ class FruitDetectorGUI(QMainWindow):
 
         self.worker = StreamWorker(
             confidence_threshold=getattr(self, 'cutoff_threshold', 60.0),
+            min_object_size=getattr(self, 'min_object_size', 1500),
             smoothing_window=getattr(self, 'smoothing_window', 10)
         )
         self.worker.frame_processed.connect(self.update_frame)
@@ -579,28 +613,49 @@ class FruitDetectorGUI(QMainWindow):
             self.lbl_status.setText(f"● Error ({msg})")
             self.lbl_status.setStyleSheet("background-color: #7f1d1d; color: #fca5a5; border: 1px solid #b91c1c; padding: 6px 14px; border-radius: 20px; font-weight: 700; font-size: 12px;")
 
-    def update_frame(self, frame, pred_class, confidence, is_fresh, fps):
+    def update_frame(self, frame, results, fps):
         self.last_frame = frame.copy()
         self.lbl_fps.setText(f"⚡ Stream FPS: {fps:.1f}")
 
-        # Draw Bounding Box & HUD
-        h, w, _ = frame.shape
-        margin_x, margin_y = int(w * 0.15), int(h * 0.15)
-        
-        if is_fresh is True:
-            box_color = (0, 220, 100) # Bright Green
-        elif is_fresh is False:
-            box_color = (0, 50, 240)  # Vivid Red
-        else:
-            box_color = (140, 140, 140) # Slate Gray
+        count = len(results)
+        self.pill_count.setText(f"📦 Objects: {count}")
 
-        cv2.rectangle(frame, (margin_x, margin_y), (w - margin_x, h - margin_y), box_color, 3)
+        # Draw Multi-Object Bounding Boxes & Glassmorphism Badge Overlays
+        for res in results:
+            x, y, w, h = res['box']
+            pred_class = res['class']
+            confidence = res['confidence']
+            is_fresh = res['is_fresh']
+
+            if is_fresh is True:
+                box_color = (0, 220, 100) # Bright Green
+            elif is_fresh is False:
+                box_color = (0, 50, 240)  # Vivid Red
+            else:
+                box_color = (140, 140, 140) # Slate Gray
+
+            # Bounding Box
+            cv2.rectangle(frame, (x, y), (x + w, y + h), box_color, 2)
+
+            # Floating Label Badge
+            emoji_name = FRUIT_EMOJIS.get(pred_class, pred_class)
+            label_text = f"{emoji_name} ({confidence:.0f}%)"
+
+            font_scale = 0.48
+            thickness = 1
+            (text_w, text_h), baseline = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+            banner_y1 = max(0, y - text_h - 8)
+            banner_y2 = y
+
+            cv2.rectangle(frame, (x, banner_y1), (x + text_w + 10, banner_y2), (15, 23, 42), -1)
+            cv2.rectangle(frame, (x, banner_y1), (x + text_w + 10, banner_y2), box_color, 1)
+            cv2.putText(frame, label_text, (x + 5, y - 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
         # Convert to QPixmap for Canvas
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb_frame.shape
-        bytes_per_line = ch * w
-        q_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888 if hasattr(QImage.Format, 'Format_RGB888') else QImage.Format_RGB888)
+        fh, fw, ch = rgb_frame.shape
+        bytes_per_line = ch * fw
+        q_img = QImage(rgb_frame.data, fw, fh, bytes_per_line, QImage.Format.Format_RGB888 if hasattr(QImage.Format, 'Format_RGB888') else QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(q_img)
 
         self.video_label.setPixmap(pixmap.scaled(
@@ -608,26 +663,40 @@ class FruitDetectorGUI(QMainWindow):
             Qt.AspectRatioMode.KeepAspectRatio if hasattr(Qt, 'AspectRatioMode') else Qt.KeepAspectRatio
         ))
 
-        # Update Display Card
-        emoji_name = FRUIT_EMOJIS.get(pred_class, pred_class)
-        self.lbl_fruit_name.setText(emoji_name)
-        self.progress_conf.setValue(int(confidence))
+        # Update Primary Hero Display Card (Primary High-Confidence Object)
+        if results:
+            top_obj = results[0]
+            top_class = top_obj['class']
+            top_conf = top_obj['confidence']
+            top_fresh = top_obj['is_fresh']
 
-        if is_fresh is True:
-            self.lbl_fresh_badge.setText("FRESH QUALITY")
-            self.lbl_fresh_badge.setStyleSheet(
-                "background-color: #059669; color: #ffffff; padding: 8px 14px; "
-                "border-radius: 8px; font-weight: 800; font-size: 14px;"
-            )
-        elif is_fresh is False:
-            self.lbl_fresh_badge.setText("ROTTEN / SPOILED")
-            self.lbl_fresh_badge.setStyleSheet(
-                "background-color: #dc2626; color: #ffffff; padding: 8px 14px; "
-                "border-radius: 8px; font-weight: 800; font-size: 14px;"
-            )
+            emoji_name = FRUIT_EMOJIS.get(top_class, top_class)
+            self.lbl_fruit_name.setText(emoji_name)
+            self.progress_conf.setValue(int(top_conf))
+
+            if top_fresh is True:
+                self.lbl_fresh_badge.setText("FRESH QUALITY")
+                self.lbl_fresh_badge.setStyleSheet(
+                    "background-color: #059669; color: #ffffff; padding: 8px 14px; "
+                    "border-radius: 8px; font-weight: 800; font-size: 14px;"
+                )
+            elif top_fresh is False:
+                self.lbl_fresh_badge.setText("ROTTEN / SPOILED")
+                self.lbl_fresh_badge.setStyleSheet(
+                    "background-color: #dc2626; color: #ffffff; padding: 8px 14px; "
+                    "border-radius: 8px; font-weight: 800; font-size: 14px;"
+                )
+            else:
+                cutoff_val = int(getattr(self, 'cutoff_threshold', 60.0))
+                self.lbl_fresh_badge.setText(f"LOW CONFIDENCE (< {cutoff_val}%)")
+                self.lbl_fresh_badge.setStyleSheet(
+                    "background-color: #334155; color: #cbd5e1; padding: 8px 14px; "
+                    "border-radius: 8px; font-weight: 800; font-size: 14px;"
+                )
         else:
-            cutoff_val = int(getattr(self, 'cutoff_threshold', 60.0))
-            self.lbl_fresh_badge.setText(f"LOW CONFIDENCE (< {cutoff_val}%)")
+            self.lbl_fruit_name.setText("❓ Object Not Detected")
+            self.progress_conf.setValue(0)
+            self.lbl_fresh_badge.setText("NO OBJECTS IN VIEW")
             self.lbl_fresh_badge.setStyleSheet(
                 "background-color: #334155; color: #cbd5e1; padding: 8px 14px; "
                 "border-radius: 8px; font-weight: 800; font-size: 14px;"
