@@ -318,3 +318,69 @@ def detect_and_classify_multi_objects(bgr_frame, model=None, transform=None, dev
             })
 
     return results
+
+class TemporalObjectTracker:
+    """
+    Temporal Multi-Object Anti-Jitter Tracker:
+    - Smooths bounding box coordinates across consecutive video frames using EMA (alpha=0.35).
+    - Preserves object detections across temporary 4-frame camera stream dropouts to stop box flickering!
+    """
+    def __init__(self, persistence_frames=4, alpha=0.35):
+        self.persistence_frames = persistence_frames
+        self.alpha = alpha
+        self.tracked_objects = []
+        self.next_id = 1
+
+    def update(self, new_detections):
+        updated_tracked = []
+        matched_new_indices = set()
+
+        # Match new detections with existing tracked objects via IoU
+        for tracked in self.tracked_objects:
+            best_iou = 0.0
+            best_match_idx = -1
+
+            for idx, det in enumerate(new_detections):
+                if idx in matched_new_indices:
+                    continue
+                iou = compute_box_iou(tracked['box'], det['box'])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_match_idx = idx
+
+            if best_iou >= 0.25 and best_match_idx != -1:
+                # Match found! Smooth box coordinates and update prediction attributes
+                matched_det = new_detections[best_match_idx]
+                matched_new_indices.add(best_match_idx)
+
+                tx, ty, tw, th = tracked['box']
+                nx, ny, nw, nh = matched_det['box']
+
+                sx = int(self.alpha * nx + (1 - self.alpha) * tx)
+                sy = int(self.alpha * ny + (1 - self.alpha) * ty)
+                sw = int(self.alpha * nw + (1 - self.alpha) * tw)
+                sh = int(self.alpha * nh + (1 - self.alpha) * th)
+
+                tracked['box'] = (sx, sy, sw, sh)
+                tracked['class'] = matched_det['class']
+                tracked['confidence'] = matched_det['confidence']
+                tracked['is_fresh'] = matched_det['is_fresh']
+                tracked['missed_frames'] = 0
+                updated_tracked.append(tracked)
+            else:
+                # Missed in this frame! Keep for persistence grace period to prevent box flicker
+                tracked['missed_frames'] += 1
+                if tracked['missed_frames'] <= self.persistence_frames:
+                    updated_tracked.append(tracked)
+
+        # Add unmatched new detections as new tracked objects
+        for idx, det in enumerate(new_detections):
+            if idx not in matched_new_indices:
+                new_obj = det.copy()
+                new_obj['id'] = self.next_id
+                new_obj['missed_frames'] = 0
+                self.next_id += 1
+                updated_tracked.append(new_obj)
+
+        self.tracked_objects = updated_tracked
+        return [obj for obj in self.tracked_objects if obj['missed_frames'] <= self.persistence_frames]

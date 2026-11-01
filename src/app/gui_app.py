@@ -45,7 +45,7 @@ except ImportError:
     from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
     from PyQt6.QtGui import QImage, QPixmap, QFont, QColor
 
-from src.engine.model import FruitCNN, CLASS_NAMES, classify_fruit_frame, detect_and_classify_multi_objects
+from src.engine.model import FruitCNN, CLASS_NAMES, classify_fruit_frame, detect_and_classify_multi_objects, TemporalObjectTracker
 
 # ESP32 Configuration
 ESP32_IP = "192.168.1.21"
@@ -106,6 +106,7 @@ class StreamWorker(QThread):
         self.min_object_size = min_object_size
         self.smoothing_window = max(1, int(smoothing_window))
         self.prob_histories = {}
+        self.tracker = TemporalObjectTracker(persistence_frames=4, alpha=0.35)
         self.running = True
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.transform = get_inference_transform()
@@ -207,15 +208,18 @@ class StreamWorker(QThread):
                                 fps_start = time.time()
 
                             # Batched OpenCV Contour Localization + PyTorch Deep Neural Network Classification
-                            results = detect_and_classify_multi_objects(
+                            raw_results = detect_and_classify_multi_objects(
                                 frame, self.model, self.transform, self.device,
                                 confidence_threshold=self.confidence_threshold,
                                 min_area=self.min_object_size,
                                 prob_histories=self.prob_histories
                             )
 
-                            # Emit frame & multi-object detection results
-                            self.frame_processed.emit(frame, results, fps)
+                            # Temporal Anti-Jitter Box Tracking & EMA Coordinate Smoothing
+                            smooth_results = self.tracker.update(raw_results)
+
+                            # Emit frame & tracked multi-object results
+                            self.frame_processed.emit(frame, smooth_results, fps)
 
             except Exception as e:
                 if self.running and not self.pending_controls:
