@@ -120,6 +120,27 @@ def classify_fruit_frame(bgr_frame, model=None, transform=None, device="cpu", co
         print(f"[Inference Error] {e}")
         return "Error", 0.0, None
 
+def compute_box_iou(box1, box2):
+    x1, y1, w1, h1 = box1
+    x2, y2, w2, h2 = box2
+
+    xi1 = max(x1, x2)
+    yi1 = max(y1, y2)
+    xi2 = min(x1 + w1, x2 + w2)
+    yi2 = min(y1 + h1, y2 + h2)
+
+    inter_w = max(0, xi2 - xi1)
+    inter_h = max(0, yi2 - yi1)
+    inter_area = inter_w * inter_h
+
+    area1 = w1 * h1
+    area2 = w2 * h2
+    union_area = area1 + area2 - inter_area
+
+    if union_area <= 0:
+        return 0.0
+    return inter_area / float(union_area)
+
 def contains_box(parent, child):
     """Returns True if parent box contains child box center and is significantly larger."""
     px, py, pw, ph = parent
@@ -130,83 +151,82 @@ def contains_box(parent, child):
     
     return (px <= ccx <= px + pw) and (py <= ccy <= py + ph) and (pw * ph > cw * ch * 1.25)
 
-def extract_object_regions(bgr_frame, min_area=1500, max_objects=8):
+def extract_object_regions(bgr_frame, min_area=1000, max_objects=8):
     """
-    Uses OpenCV Multi-level Contour Retrieval & Canny Edge Gradients to detect
-    individual objects (including multiple images on PC screens, paper sheets, and trays).
-    Returns a list of bounding boxes [(x, y, w, h), ...]
+    Multi-Candidate Computer Vision Region Proposal Detector:
+    1. Generates object candidates across Saturation, Otsu Brightness, and Canny Edge Channels.
+    2. Filters out parent container boxes (e.g. monitor screen enclosing fruit cards).
+    3. Merges overlapping bounding boxes via Non-Maximum Suppression (NMS IoU > 0.4).
     """
     if bgr_frame is None or bgr_frame.size == 0:
         return []
 
     h, w, _ = bgr_frame.shape
-
-    # Convert to HSV & Grayscale for robust foreground object segmentation
-    hsv = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
-    
-    # Blur to smooth image noise & screen reflections
+    hsv = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2HSV)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # 1. Canny Edge Detection (Ideal for separating multiple objects on screens/paper)
-    edges = cv2.Canny(blurred, 30, 120)
+    candidate_boxes = []
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+
+    # Mask Channel 1: Saturation Mask (Catches colorful fruits: apples, bananas, oranges)
+    sat = hsv[:, :, 1]
+    _, sat_thresh = cv2.threshold(sat, 25, 255, cv2.THRESH_BINARY)
+    
+    # Mask Channel 2: Foreground Otsu Binarization (Catches white paper cards / screen cards)
+    _, bright_otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Mask Channel 3: Canny Edge Gradients
+    edges = cv2.Canny(blurred, 30, 130)
     edges_closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
 
-    # 2. Adaptive Intensity Threshold
-    mean_val = float(np.mean(blurred))
-    if mean_val < 120:
-        _, thresh = cv2.threshold(blurred, int(max(10, mean_val + 15)), 255, cv2.THRESH_BINARY)
-    else:
-        _, thresh = cv2.threshold(blurred, int(min(245, mean_val - 15)), 255, cv2.THRESH_BINARY_INV)
+    masks = [sat_thresh, bright_otsu, edges_closed]
 
-    # 3. Saturation Mask (Fruits are colorful/saturated)
-    sat_mask = cv2.inRange(hsv, (0, 25, 20), (180, 255, 255))
-    sat_closed = cv2.morphologyEx(sat_mask, cv2.MORPH_CLOSE, kernel)
+    for mask in masks:
+        m_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(m_closed, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Combine masks
-    combined_mask = cv2.bitwise_or(edges_closed, thresh)
-    combined_mask = cv2.bitwise_or(combined_mask, sat_closed)
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area >= min_area:
+                x, y, bw, bh = cv2.boundingRect(cnt)
+                # Ignore boxes taking up >85% of full frame (screen display frame)
+                if bw > w * 0.85 or bh > h * 0.85:
+                    continue
+                candidate_boxes.append((x, y, bw, bh))
 
-    # Find ALL contours (RETR_TREE finds inner child contours on screens & trays)
-    contours, _ = cv2.findContours(combined_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-    raw_boxes = []
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area >= min_area:
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            
-            # Ignore bounding boxes taking up >90% of full frame (outer screen border)
-            if bw > w * 0.90 and bh > h * 0.90:
-                continue
-
-            raw_boxes.append((x, y, bw, bh))
-
-    # Filter out parent container boxes (e.g. outer monitor display containing 2 inner fruit cards)
-    if len(raw_boxes) > 1:
-        filtered_boxes = []
-        for i, b1 in enumerate(raw_boxes):
-            is_container = False
-            for j, b2 in enumerate(raw_boxes):
-                if i != j and contains_box(b1, b2):
-                    is_container = True
-                    break
-            if not is_container:
-                filtered_boxes.append(b1)
-        boxes = filtered_boxes if filtered_boxes else raw_boxes
-    else:
-        boxes = raw_boxes
-
-    # Sort bounding boxes by area descending and limit to max_objects
-    boxes = sorted(boxes, key=lambda b: b[2] * b[3], reverse=True)[:max_objects]
-
-    # Fallback: If no contour found above min_area, return central 70% region
-    if not boxes:
+    if not candidate_boxes:
         margin_x, margin_y = int(w * 0.15), int(h * 0.15)
-        boxes = [(margin_x, margin_y, w - 2 * margin_x, h - 2 * margin_y)]
+        return [(margin_x, margin_y, w - 2 * margin_x, h - 2 * margin_y)]
 
-    return boxes
+    # Filter 1: Discard parent container boxes containing smaller valid child boxes
+    filtered_containers = []
+    for i, b1 in enumerate(candidate_boxes):
+        is_container = False
+        for j, b2 in enumerate(candidate_boxes):
+            if i != j and contains_box(b1, b2):
+                is_container = True
+                break
+        if not is_container:
+            filtered_containers.append(b1)
+
+    if not filtered_containers:
+        filtered_containers = candidate_boxes
+
+    # Filter 2: Non-Maximum Suppression (NMS) to merge overlapping boxes (IoU > 0.4)
+    filtered_containers = sorted(filtered_containers, key=lambda b: b[2] * b[3], reverse=True)
+    nms_boxes = []
+
+    for box in filtered_containers:
+        keep = True
+        for kept in nms_boxes:
+            if compute_box_iou(box, kept) > 0.4:
+                keep = False
+                break
+        if keep:
+            nms_boxes.append(box)
+
+    return nms_boxes[:max_objects]
 
 def detect_and_classify_multi_objects(bgr_frame, model=None, transform=None, device="cpu", confidence_threshold=60.0, min_area=1500, prob_histories=None):
     """
