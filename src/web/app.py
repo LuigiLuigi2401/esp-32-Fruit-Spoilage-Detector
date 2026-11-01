@@ -138,12 +138,19 @@ class WebStreamEngine:
                     if last_a == -1:
                         continue
                         
-                    # Extract latest JPG frame
+                    # Extract latest JPG frame safely
                     jpg_data = bytes_buffer[last_a:last_b+2]
-                    bytes_buffer = bytes_buffer[last_b+2:] # Purge stale historical buffer!
+                    bytes_buffer = bytes_buffer[last_b+2:] # Purge stale historical buffer
                     
-                    frame = cv2.imdecode(np.frombuffer(jpg_data, dtype=np.uint8), cv2.IMREAD_COLOR)
-                    if frame is None:
+                    if not jpg_data or len(jpg_data) < 200:
+                        continue
+
+                    try:
+                        frame = cv2.imdecode(np.frombuffer(jpg_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    except Exception:
+                        continue
+
+                    if frame is None or frame.size == 0:
                         continue
                         
                     # Calculate FPS
@@ -162,13 +169,17 @@ class WebStreamEngine:
                         conf_thresh = self.conf_threshold * 100.0
                         
                     # Run OpenCV Multi-Object Detection + PyTorch Inference
-                    det_results = detect_and_classify_multi_objects(
-                        frame,
-                        self.model,
-                        device=self.device,
-                        confidence_threshold=conf_thresh,
-                        min_area=min_area
-                    )
+                    try:
+                        det_results = detect_and_classify_multi_objects(
+                            frame,
+                            self.model,
+                            device=self.device,
+                            confidence_threshold=conf_thresh,
+                            min_area=min_area
+                        )
+                    except Exception as de:
+                        print(f"[Vision Engine Warning] {de}")
+                        det_results = []
                     
                     # Anti-Jitter Bounding Box Tracker
                     tracked_boxes = self.tracker.update(det_results)
@@ -189,18 +200,18 @@ class WebStreamEngine:
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
                     
                     # Encode output frame as JPEG
-                    ret, buffer = cv2.imencode('.jpg', annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-                    if ret:
+                    ret, buffer = cv2.imencode('.jpg', annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                    if ret and buffer is not None:
                         with self.lock:
                             self.last_raw_frame = annotated_frame.copy()
                             self.last_jpeg_bytes = buffer.tobytes()
                             self.detected_objects = tracked_boxes
                             
             except Exception as e:
+                print(f"[WebEngine Stream Warning] Re-establishing stream: {e}")
                 with self.lock:
                     self.is_connected = False
-                    self.fps = 0.0
-                time.sleep(1.0)
+                time.sleep(0.5)
 
 engine = WebStreamEngine()
 
@@ -218,17 +229,16 @@ def get_local_ip():
 def generate_mjpeg_response():
     """High-speed MJPEG stream generator serving pre-rendered background frames."""
     blank = np.zeros((240, 320, 3), dtype=np.uint8)
-    cv2.putText(blank, "ESP32 Connecting / Offline...", (20, 120),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 116, 139), 1, cv2.LINE_AA)
+    cv2.putText(blank, "Connecting to ESP32-CAM...", (25, 120),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (56, 189, 248), 1, cv2.LINE_AA)
     _, blank_buf = cv2.imencode('.jpg', blank)
     blank_bytes = blank_buf.tobytes()
     
     while True:
         with engine.lock:
             jpeg_bytes = engine.last_jpeg_bytes
-            is_conn = engine.is_connected
             
-        if is_conn and jpeg_bytes is not None:
+        if jpeg_bytes is not None:
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + jpeg_bytes + b'\r\n')
         else:
