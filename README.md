@@ -6,7 +6,7 @@
 [![ESP32-CAM](https://img.shields.io/badge/Hardware-ESP32--CAM-000000?style=for-the-badge&logo=espressif&logoColor=white)](https://www.espressif.com/)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
-An end-to-end, real-time edge AI computer vision system for fruit freshness classification and spoilage detection. Powered by **ESP32-CAM** MJPEG video streaming, **OpenCV** multi-candidate region proposal, **PyTorch MobileNetV2** deep learning inference, and a modern **PyQt6** glassmorphic desktop application.
+An end-to-end, real-time edge AI computer vision system for fruit freshness classification and spoilage detection. Powered by **ESP32-CAM** MJPEG video streaming, **OpenCV** multi-candidate region proposal, **PyTorch MobileNetV2** deep learning inference, and a modern **PyQt6** glassmorphic desktop & **Flask** web application.
 
 ---
 
@@ -21,29 +21,22 @@ An end-to-end, real-time edge AI computer vision system for fruit freshness clas
 
 ## 📐 System Architecture Pipeline
 
-```
- [ ESP32-CAM Sensor ]
-         │ (WiFi MJPEG Stream: QVGA 320x240 @ 25 FPS)
-         ▼
- [ OpenCV Multi-Candidate Region Proposal ]
- ├── Saturation Channel Masking (S ≥ 25)
- ├── Foreground Otsu Adaptive Binarization
- └── Canny Edge Gradient Closure
-         │
-         ▼
- [ Hierarchical Contour & Parent Container Filtering ]
- └── Suppresses outer monitor frames & desk borders
-         │
-         ▼
- [ Non-Maximum Suppression (NMS IoU > 0.40) ]
-         │
-         ▼
- [ Batched PyTorch MobileNetV2 Forward Pass ]
- └── ROI Crops (150x150) -> Stacked Tensor -> Logit Margin Check
-         │
-         ▼
- [ Temporal Anti-Jitter Tracker & Desktop GUI ]
- └── EMA Bounding Box Smoothness + Floating Glassmorphism Badges
+```mermaid
+flowchart TD
+    A[📷 ESP32-CAM Sensor<br>WiFi MJPEG Stream QVGA 320x240 @ 25 FPS] --> B[🔍 OpenCV Multi-Candidate Region Proposal]
+    
+    subgraph Candidate_Proposal [OpenCV Region Proposal]
+        B --> B1[Saturation Channel Masking S ≥ 25]
+        B1 --> B2[Foreground Otsu Adaptive Binarization]
+        B2 --> B3[Canny Edge Gradient Closure]
+    end
+
+    Candidate_Proposal --> C[FILTER: Hierarchical Contour Filtering<br>Suppresses outer monitor frames & desk borders]
+    C --> D[NMS: Non-Maximum Suppression IoU > 0.40]
+    
+    D --> E[🧠 Batched PyTorch MobileNetV2 Forward Pass<br>ROI Crops 150x150 ➔ Stacked Tensor ➔ Logit Margin Check]
+    
+    E --> F[🖥️ Temporal Anti-Jitter Tracker & GUI App<br>EMA Bounding Box Smoothness + Floating Badges]
 ```
 
 ---
@@ -52,7 +45,8 @@ An end-to-end, real-time edge AI computer vision system for fruit freshness clas
 
 ```
 esp-32-Fruit-Spoilage-Detector/
-├── main.py                      # Primary desktop application entry point
+├── main.py                      # Primary PyQt6 glassmorphism GUI entry point
+├── web_main.py                  # Flask web application entry point (network access)
 ├── requirements.txt             # Python dependencies
 ├── README.md                    # System documentation and wiki
 │
@@ -95,14 +89,18 @@ esp-32-Fruit-Spoilage-Detector/
 ## ⚡ Quick Start & Installation
 
 ### 1. Hardware Setup (ESP32-CAM)
-1. Open [`firmware/esp32_cam_streamer.ino`](file:///d:/Projects/Arduino/FruitClassification/firmware/esp32_cam_streamer.ino) in Arduino IDE.
-2. Set your WiFi credentials:
+
+1. Open [`firmware/esp32_cam_streamer.ino`](file:///d:/Projects/Github/esp-32-Fruit-Spoilage-Detector/firmware/esp32_cam_streamer.ino) in Arduino IDE.
+2. Set your Wi-Fi credentials:
    ```cpp
    const char* ssid = "YOUR_WIFI_SSID";
    const char* password = "YOUR_WIFI_PASSWORD";
    ```
 3. Select board **AI Thinker ESP32-CAM** and flash the firmware.
 4. Note the IP address printed in the Serial Monitor (e.g. `http://192.168.1.100`).
+
+> [!NOTE]
+> Make sure your ESP32-CAM and host computer/device are connected to the same Wi-Fi subnet for streaming.
 
 ### 2. Desktop & Web Application Launch
 
@@ -119,7 +117,10 @@ python web_main.py
 ```
 Open your browser and navigate to:
 * **Local Computer**: `http://localhost:5000`
-* **Mobile / Other Devices**: `http://192.168.1.17:5000` (Use the local IP displayed in the terminal output)
+* **Mobile / Other Devices**: `http://<YOUR_LOCAL_IP>:5000` (Use the local IP displayed in terminal output)
+
+> [!TIP]
+> The Flask web application is optimized for mobile touchscreens, making it easy to monitor fruit freshness on smartphones or iPads near the camera rig!
 
 ---
 
@@ -145,4 +146,4 @@ Open your browser and navigate to:
 
 ## 📜 License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for more information.
