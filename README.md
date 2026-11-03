@@ -23,20 +23,20 @@ An end-to-end, real-time edge AI computer vision system for fruit freshness clas
 
 ```mermaid
 flowchart TD
-    A[📷 ESP32-CAM Sensor<br>WiFi MJPEG Stream QVGA 320x240 @ 25 FPS] --> B[🔍 OpenCV Multi-Candidate Region Proposal]
+    A["ESP32-CAM Sensor - WiFi MJPEG Stream QVGA 320x240 @ 25 FPS"] --> B["OpenCV Multi-Candidate Region Proposal"]
     
-    subgraph Candidate_Proposal [OpenCV Region Proposal]
-        B --> B1[Saturation Channel Masking S ≥ 25]
-        B1 --> B2[Foreground Otsu Adaptive Binarization]
-        B2 --> B3[Canny Edge Gradient Closure]
+    subgraph Candidate_Proposal ["OpenCV Region Proposal"]
+        B --> B1["Saturation Channel Masking S >= 25"]
+        B1 --> B2["Foreground Otsu Adaptive Binarization"]
+        B2 --> B3["Canny Edge Gradient Closure"]
     end
 
-    Candidate_Proposal --> C[FILTER: Hierarchical Contour Filtering<br>Suppresses outer monitor frames & desk borders]
-    C --> D[NMS: Non-Maximum Suppression IoU > 0.40]
+    Candidate_Proposal --> C["FILTER: Hierarchical Contour Filtering"]
+    C --> D["NMS: Non-Maximum Suppression IoU > 0.40"]
     
-    D --> E[🧠 Batched PyTorch MobileNetV2 Forward Pass<br>ROI Crops 150x150 ➔ Stacked Tensor ➔ Logit Margin Check]
+    D --> E["Batched PyTorch MobileNetV2 Forward Pass"]
     
-    E --> F[🖥️ Temporal Anti-Jitter Tracker & GUI App<br>EMA Bounding Box Smoothness + Floating Badges]
+    E --> F["Temporal Anti-Jitter Tracker & GUI App"]
 ```
 
 ---
