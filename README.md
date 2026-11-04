@@ -88,16 +88,29 @@ esp-32-Fruit-Spoilage-Detector/
 
 ## ⚡ Quick Start & Installation
 
-### 1. Hardware Setup (ESP32-CAM)
+### 1. Hardware Setup & Dynamic Wi-Fi Provisioning (ESP32-CAM)
+1. Open [`firmware/ESP32Cam_WebServer/ESP32Cam_WebServer.ino`](file:///d:/Projects/Arduino/FruitClassification/firmware/ESP32Cam_WebServer/ESP32Cam_WebServer.ino) in Arduino IDE.
+2. Select board **AI Thinker ESP32-CAM** and flash the firmware.
 
-1. Open [`firmware/esp32_cam_streamer.ino`](file:///d:/Projects/Github/esp-32-Fruit-Spoilage-Detector/firmware/esp32_cam_streamer.ino) in Arduino IDE.
-2. Set your Wi-Fi credentials:
-   ```cpp
-   const char* ssid = "YOUR_WIFI_SSID";
-   const char* password = "YOUR_WIFI_PASSWORD";
-   ```
-3. Select board **AI Thinker ESP32-CAM** and flash the firmware.
-4. Note the IP address printed in the Serial Monitor (e.g. `http://192.168.1.100`).
+#### 📶 Dynamic Wi-Fi Provisioning (No Code Changes Needed!)
+Instead of hardcoding Wi-Fi credentials in the C++ file, you can dynamically configure the ESP32-CAM Wi-Fi network across different environments (e.g., Home, University, Office, Mobile Hotspot):
+
+* **Option A: Python Serial CLI Tool (Recommended over USB)**:
+  Connect the ESP32-CAM to your PC via USB and run:
+  ```bash
+  # Interactive Mode: Scans surrounding Wi-Fi networks and prompts for password
+  python -m src.cli.wifi_config
+
+  # Direct CLI Command:
+  python -m src.cli.wifi_config --ssid "TargetWiFiName" --password "TargetPassword"
+  ```
+  *The credentials are stored persistently in the ESP32's internal NVS flash memory across power reboots!*
+
+* **Option B: Fallback Smartphone/Browser Access Point**:
+  If Wi-Fi fails to connect after 15 seconds (e.g. when powered by a power bank in a new location), the ESP32-CAM automatically creates a setup hotspot named **`ESP32-CAM-Setup`**.
+  1. Connect your phone or laptop to Wi-Fi `ESP32-CAM-Setup`.
+  2. Open `http://192.168.4.1` in your browser.
+  3. Enter the Wi-Fi name & password and click **Save & Connect**!
 
 > [!NOTE]
 > Make sure your ESP32-CAM and host computer/device are connected to the same Wi-Fi subnet for streaming.

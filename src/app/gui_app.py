@@ -32,7 +32,7 @@ try:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout,
         QHBoxLayout, QComboBox, QProgressBar, QFrame, QGraphicsDropShadowEffect,
-        QGridLayout, QSlider
+        QGridLayout, QSlider, QLineEdit
     )
     from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer
     from PyQt5.QtGui import QImage, QPixmap, QFont, QColor
@@ -40,7 +40,7 @@ except ImportError:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout,
         QHBoxLayout, QComboBox, QProgressBar, QFrame, QGraphicsDropShadowEffect,
-        QGridLayout, QSlider
+        QGridLayout, QSlider, QLineEdit
     )
     from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
     from PyQt6.QtGui import QImage, QPixmap, QFont, QColor
@@ -125,7 +125,7 @@ class StreamWorker(QThread):
     def run(self):
         # Deferred Background PyTorch Model Weight Loading (Zero UI Launch Delay!)
         if self.model is None:
-            self.model = FruitCNN(num_classes=6).to(self.device)
+            self.model = FruitCNN(num_classes=7).to(self.device)
             if os.path.exists(self.model_path):
                 try:
                     state_dict = torch.load(self.model_path, map_location=self.device)
@@ -236,6 +236,9 @@ class FruitDetectorGUI(QMainWindow):
         self.setWindowTitle("ESP32-CAM Fruit AI Studio Pro")
         self.resize(1180, 760)
         self.setMinimumSize(1000, 680)
+        self.esp32_ip = "10.107.58.11"
+        self.stream_url = f"http://{self.esp32_ip}/stream"
+        self.control_url = f"http://{self.esp32_ip}/control"
         self.flash_state = False
         self.last_frame = None
 
@@ -360,9 +363,71 @@ class FruitDetectorGUI(QMainWindow):
         self.pill_model.setStyleSheet("background-color: #1e1b4b; color: #a7f3d0; border: 1px solid #312e81; padding: 6px 14px; border-radius: 20px; font-weight: 700; font-size: 12px;")
         header_layout.addWidget(self.pill_model)
 
-        self.pill_ip = QLabel(f"🌐 {ESP32_IP}")
-        self.pill_ip.setStyleSheet("background-color: #1e293b; color: #94a3b8; border: 1px solid #334155; padding: 6px 14px; border-radius: 20px; font-weight: 600; font-size: 12px;")
-        header_layout.addWidget(self.pill_ip)
+        # Dynamic IP Address Input Bar
+        ip_box_layout = QHBoxLayout()
+        ip_box_layout.setSpacing(6)
+
+        lbl_ip_icon = QLabel("🌐 IP:")
+        lbl_ip_icon.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 12px;")
+        ip_box_layout.addWidget(lbl_ip_icon)
+
+        self.txt_ip = QLineEdit(self.esp32_ip)
+        self.txt_ip.setPlaceholderText("e.g. 10.107.58.11 or esp32-cam.local")
+        self.txt_ip.setStyleSheet("""
+            QLineEdit {
+                background-color: #0f172a;
+                color: #38bdf8;
+                border: 1px solid #334155;
+                border-radius: 8px;
+                padding: 5px 10px;
+                font-weight: 700;
+                font-size: 13px;
+                min-width: 130px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #0284c7;
+            }
+        """)
+        self.txt_ip.returnPressed.connect(self.apply_new_ip)
+        ip_box_layout.addWidget(self.txt_ip)
+
+        self.btn_ip_connect = QPushButton("Connect")
+        self.btn_ip_connect.setStyleSheet("""
+            QPushButton {
+                background-color: #0284c7;
+                color: #ffffff;
+                padding: 5px 12px;
+                border-radius: 8px;
+                font-weight: 700;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #0369a1;
+            }
+        """)
+        self.btn_ip_connect.clicked.connect(self.apply_new_ip)
+        ip_box_layout.addWidget(self.btn_ip_connect)
+
+        self.btn_auto_detect = QPushButton("🔍 Auto-Detect")
+        self.btn_auto_detect.setStyleSheet("""
+            QPushButton {
+                background-color: #1e293b;
+                color: #a7f3d0;
+                border: 1px solid #059669;
+                padding: 5px 12px;
+                border-radius: 8px;
+                font-weight: 700;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #065f46;
+                color: #ffffff;
+            }
+        """)
+        self.btn_auto_detect.clicked.connect(self.auto_detect_esp32_ip)
+        ip_box_layout.addWidget(self.btn_auto_detect)
+
+        header_layout.addLayout(ip_box_layout)
 
         self.lbl_status = QLabel("● Connecting...")
         self.lbl_status.setStyleSheet("background-color: #27272a; color: #f59e0b; border: 1px solid #3f3f46; padding: 6px 14px; border-radius: 20px; font-weight: 700; font-size: 12px;")
@@ -593,6 +658,66 @@ class FruitDetectorGUI(QMainWindow):
         if hasattr(self, 'worker'):
             self.worker.min_object_size = val
 
+    def apply_new_ip(self):
+        new_ip = self.txt_ip.text().strip()
+        if not new_ip:
+            return
+        # Clean user input (strip http:// or trailing slashes)
+        new_ip = new_ip.replace("http://", "").replace("https://", "").split("/")[0]
+        self.esp32_ip = new_ip
+        self.stream_url = f"http://{self.esp32_ip}/stream"
+        self.control_url = f"http://{self.esp32_ip}/control"
+        global CONTROL_URL
+        CONTROL_URL = self.control_url
+        print(f"[UI] Applied new ESP32 IP: {self.esp32_ip}")
+        self.start_stream()
+
+    def auto_detect_esp32_ip(self):
+        self.btn_auto_detect.setText("🔍 Scanning...")
+        self.btn_auto_detect.setEnabled(False)
+        QApplication.processEvents()
+
+        def worker():
+            try:
+                from src.cli.find_esp32 import listen_udp_beacon, get_local_ip_info, check_ip
+                import concurrent.futures
+
+                # Phase 1: Fast UDP Beacon Listener
+                ip, url = listen_udp_beacon(timeout=2.0)
+                if not ip:
+                    # Phase 2: Parallel Multi-subnet Probe
+                    local_ip, subnets = get_local_ip_info()
+                    ips_to_scan = [f"{sub}.{host}" for sub in subnets for host in range(1, 255)]
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+                        results = executor.map(check_ip, ips_to_scan)
+                        for found_ip in results:
+                            if found_ip:
+                                ip = found_ip
+                                break
+
+                if ip:
+                    print(f"[Auto-Detect SUCCESS] Found ESP32 at: {ip}")
+                    QTimer.singleShot(0, lambda: self.on_auto_detect_success(ip))
+                else:
+                    QTimer.singleShot(0, self.on_auto_detect_failed)
+            except Exception as e:
+                print(f"[Auto-Detect Error] {e}")
+                QTimer.singleShot(0, self.on_auto_detect_failed)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_auto_detect_success(self, ip):
+        self.txt_ip.setText(ip)
+        self.btn_auto_detect.setText("🔍 Auto-Detect")
+        self.btn_auto_detect.setEnabled(True)
+        self.apply_new_ip()
+
+    def on_auto_detect_failed(self):
+        self.btn_auto_detect.setText("🔍 Auto-Detect")
+        self.btn_auto_detect.setEnabled(True)
+        self.lbl_status.setText("● Device Not Found")
+        self.lbl_status.setStyleSheet("background-color: #7f1d1d; color: #fca5a5; border: 1px solid #b91c1c; padding: 6px 14px; border-radius: 20px; font-weight: 700; font-size: 12px;")
+
     def start_stream(self):
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.stop()
@@ -601,6 +726,7 @@ class FruitDetectorGUI(QMainWindow):
         self.lbl_status.setStyleSheet("background-color: #27272a; color: #f59e0b; border: 1px solid #3f3f46; padding: 6px 14px; border-radius: 20px; font-weight: 700; font-size: 12px;")
 
         self.worker = StreamWorker(
+            stream_url=getattr(self, 'stream_url', STREAM_URL),
             confidence_threshold=getattr(self, 'cutoff_threshold', 60.0),
             min_object_size=getattr(self, 'min_object_size', 1500),
             smoothing_window=getattr(self, 'smoothing_window', 10)

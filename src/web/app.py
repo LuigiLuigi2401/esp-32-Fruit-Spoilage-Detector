@@ -27,7 +27,7 @@ app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"), stati
 
 class WebStreamEngine:
     def __init__(self):
-        self.esp32_ip = "192.168.1.21"
+        self.esp32_ip = "10.107.58.11"
         self.stream_url = f"http://{self.esp32_ip}/stream"
         self.control_url = f"http://{self.esp32_ip}/control"
         self.is_connected = False
@@ -47,7 +47,7 @@ class WebStreamEngine:
         
         # Load Deep Learning Engine
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = FruitCNN(num_classes=6).to(self.device)
+        self.model = FruitCNN(num_classes=7).to(self.device)
         model_path = os.path.join(ROOT_DIR, "models", "fruit_classifier.pth")
         if os.path.exists(model_path):
             try:

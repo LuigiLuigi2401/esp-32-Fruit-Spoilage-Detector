@@ -13,11 +13,12 @@ from PIL import Image
 import numpy as np
 import cv2
 
-# Alphabetical class mapping matching ImageFolder & Kaggle Dataset
+# Alphabetical class mapping matching ImageFolder & Official Kaggle Dataset (7 Classes)
 CLASS_NAMES = [
     "Fresh Apple",
     "Fresh Banana",
     "Fresh Orange",
+    "Not A Fruit",
     "Rotten Apple",
     "Rotten Banana",
     "Rotten Orange"
@@ -27,6 +28,7 @@ CLASS_KEYS = [
     "freshapples",
     "freshbanana",
     "freshoranges",
+    "notafruit",
     "rottenapples",
     "rottenbanana",
     "rottenoranges"
@@ -34,10 +36,10 @@ CLASS_KEYS = [
 
 class FruitCNN(nn.Module):
     """
-    High-accuracy MobileNetV2 Deep Vision Architecture for Fruits Fresh & Rotten Classification.
+    High-accuracy MobileNetV2 Deep Vision Architecture for Fruits Fresh & Rotten Classification + Non-Fruit Rejection.
     Input size: (3, 150, 150)
     """
-    def __init__(self, num_classes=6):
+    def __init__(self, num_classes=7):
         super(FruitCNN, self).__init__()
         weights = models.MobileNet_V2_Weights.DEFAULT
         self.backbone = models.mobilenet_v2(weights=weights)
@@ -156,6 +158,56 @@ def is_valid_fruit_aspect_ratio(bw, bh):
     ratio = float(bw) / float(bh)
     return 0.25 <= ratio <= 3.8
 
+def is_human_skin_region(roi_bgr):
+    """
+    Detects if a region proposal is predominantly human skin tone (face, hands, arms, body).
+    Returns True if skin pixel area ratio > 28%.
+    """
+    if roi_bgr is None or roi_bgr.size == 0:
+        return False
+    try:
+        hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+        ycrcb = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2YCrCb)
+
+        # HSV Skin Color Range
+        lower_hsv = np.array([0, 20, 70], dtype=np.uint8)
+        upper_hsv = np.array([25, 175, 255], dtype=np.uint8)
+        mask_hsv = cv2.inRange(hsv, lower_hsv, upper_hsv)
+
+        # YCrCb Skin Color Range
+        lower_ycrcb = np.array([0, 133, 77], dtype=np.uint8)
+        upper_ycrcb = np.array([255, 173, 127], dtype=np.uint8)
+        mask_ycrcb = cv2.inRange(ycrcb, lower_ycrcb, upper_ycrcb)
+
+        skin_mask = cv2.bitwise_and(mask_hsv, mask_ycrcb)
+        skin_ratio = np.sum(skin_mask > 0) / float(roi_bgr.shape[0] * roi_bgr.shape[1])
+        return skin_ratio > 0.28
+    except Exception:
+        return False
+
+def is_valid_fruit_color_profile(roi_bgr):
+    """
+    Verifies that ROI crop has sufficient saturation / fruit color richness.
+    Filters out dull gray walls, black keyboards, white paper edges, or monocolor desks.
+    """
+    if roi_bgr is None or roi_bgr.size == 0:
+        return False
+    try:
+        hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+        sat = hsv[:, :, 1]
+        val = hsv[:, :, 2]
+
+        avg_sat = np.mean(sat)
+        vibrant_ratio = np.sum((sat > 50) & (val > 40)) / float(sat.size)
+
+        # Reject monocolor / gray / low-saturation background clutter
+        if avg_sat < 22 and vibrant_ratio < 0.10:
+            return False
+
+        return True
+    except Exception:
+        return False
+
 def extract_object_regions(bgr_frame, min_area=1000, max_objects=8):
     """
     Multi-Candidate Computer Vision Region Proposal Detector:
@@ -258,6 +310,7 @@ def detect_and_classify_multi_objects(bgr_frame, model=None, transform=None, dev
 
     roi_tensors = []
     valid_boxes = []
+    valid_crops_bgr = []
 
     for i, (x, y, bw, bh) in enumerate(boxes):
         # Add 10% padding around bounding box for context
@@ -269,14 +322,24 @@ def detect_and_classify_multi_objects(bgr_frame, model=None, transform=None, dev
         x2 = min(w, x + bw + pad_x)
         y2 = min(h, y + bh + pad_y)
 
-        crop = rgb_frame[y1:y2, x1:x2]
-        if crop.size == 0:
+        crop_bgr = bgr_frame[y1:y2, x1:x2]
+        if crop_bgr.size == 0:
             continue
 
-        pil_crop = Image.fromarray(crop)
+        # FILTER 1: Human Skin Tone Rejection (Faces, Hands, Arms)
+        if is_human_skin_region(crop_bgr):
+            continue
+
+        # FILTER 2: Fruit Color Richness & Saturation Profile Rejection
+        if not is_valid_fruit_color_profile(crop_bgr):
+            continue
+
+        crop_rgb = rgb_frame[y1:y2, x1:x2]
+        pil_crop = Image.fromarray(crop_rgb)
         roi_tensor = transform(pil_crop)
         roi_tensors.append(roi_tensor)
         valid_boxes.append((x, y, bw, bh))
+        valid_crops_bgr.append(crop_bgr)
 
     if not roi_tensors:
         return []
@@ -305,9 +368,18 @@ def detect_and_classify_multi_objects(bgr_frame, model=None, transform=None, dev
         conf_pct = float(avg_probs[pred_idx] * 100.0)
         top_margin = float(sorted_probs[-1] - sorted_probs[-2])
 
-        # Reject Non-Fruit Objects: Require confidence >= threshold AND prediction margin >= 0.12
-        if conf_pct >= confidence_threshold and top_margin >= 0.12:
+        # FILTER 3: Out-Of-Distribution (OOD) Softmax Entropy Check
+        # High entropy indicates neural network uncertainty / non-fruit object
+        entropy = -float(np.sum(avg_probs * np.log(avg_probs + 1e-7)))
+
+        # Reject Non-Fruit Objects: Require confidence >= threshold, prediction margin >= 0.15, entropy <= 1.30
+        if conf_pct >= confidence_threshold and top_margin >= 0.15 and entropy <= 1.30:
             pred_class = CLASS_NAMES[pred_idx]
+            
+            # Explicitly discard 'Not A Fruit' background predictions
+            if pred_class == "Not A Fruit":
+                continue
+
             is_fresh = "Fresh" in pred_class
 
             results.append({
@@ -319,13 +391,17 @@ def detect_and_classify_multi_objects(bgr_frame, model=None, transform=None, dev
 
     return results
 
+from collections import Counter, deque
+
 class TemporalObjectTracker:
     """
-    Temporal Multi-Object Anti-Jitter Tracker:
-    - Smooths bounding box coordinates across consecutive video frames using EMA (alpha=0.35).
-    - Preserves object detections across temporary 4-frame camera stream dropouts to stop box flickering!
+    Temporal Multi-Object Anti-Jitter Tracker with Class Hysteresis Lock:
+    - Smooths bounding box coordinates across consecutive video frames using EMA (alpha=0.30).
+    - Uses Majority Voting (Class Hysteresis) over rolling 10-frame window so labels stay 100% steady!
+    - Requires 2 consecutive confirmation hits before displaying a new object (filters 1-frame background flashes).
+    - Preserves object detections across temporary 5-frame camera dropouts.
     """
-    def __init__(self, persistence_frames=4, alpha=0.35):
+    def __init__(self, persistence_frames=5, alpha=0.30):
         self.persistence_frames = persistence_frames
         self.alpha = alpha
         self.tracked_objects = []
@@ -348,7 +424,7 @@ class TemporalObjectTracker:
                     best_iou = iou
                     best_match_idx = idx
 
-            if best_iou >= 0.25 and best_match_idx != -1:
+            if best_iou >= 0.22 and best_match_idx != -1:
                 # Match found! Smooth box coordinates and update prediction attributes
                 matched_det = new_detections[best_match_idx]
                 matched_new_indices.add(best_match_idx)
@@ -362,10 +438,18 @@ class TemporalObjectTracker:
                 sh = int(self.alpha * nh + (1 - self.alpha) * th)
 
                 tracked['box'] = (sx, sy, sw, sh)
-                tracked['class'] = matched_det['class']
-                tracked['confidence'] = matched_det['confidence']
-                tracked['is_fresh'] = matched_det['is_fresh']
+                tracked['class_history'].append(matched_det['class'])
+                tracked['conf_history'].append(matched_det['confidence'])
+
+                # Class Hysteresis: Majority Voting over rolling window
+                most_common_class = Counter(tracked['class_history']).most_common(1)[0][0]
+                avg_conf = float(np.mean(tracked['conf_history']))
+
+                tracked['class'] = most_common_class
+                tracked['confidence'] = avg_conf
+                tracked['is_fresh'] = "Fresh" in most_common_class
                 tracked['missed_frames'] = 0
+                tracked['hits'] += 1
                 updated_tracked.append(tracked)
             else:
                 # Missed in this frame! Keep for persistence grace period to prevent box flicker
@@ -379,8 +463,15 @@ class TemporalObjectTracker:
                 new_obj = det.copy()
                 new_obj['id'] = self.next_id
                 new_obj['missed_frames'] = 0
+                new_obj['hits'] = 1
+                new_obj['class_history'] = deque([det['class']], maxlen=10)
+                new_obj['conf_history'] = deque([det['confidence']], maxlen=10)
                 self.next_id += 1
                 updated_tracked.append(new_obj)
 
         self.tracked_objects = updated_tracked
-        return [obj for obj in self.tracked_objects if obj['missed_frames'] <= self.persistence_frames]
+        # Return only tracked objects that have at least 2 confirmation hits and haven't expired
+        return [
+            obj for obj in self.tracked_objects
+            if obj['missed_frames'] <= self.persistence_frames and obj['hits'] >= 2
+        ]

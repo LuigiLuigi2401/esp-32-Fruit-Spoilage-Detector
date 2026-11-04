@@ -26,7 +26,7 @@ from torchvision import datasets, transforms, models
 from sklearn.decomposition import PCA
 from sklearn.metrics import confusion_matrix, classification_report
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATASET_ROOT = os.path.join(BASE_DIR, "dataset_official", "fruits-fresh-and-rotten-for-classification")
 MODEL_SAVE_PATH = os.path.join(BASE_DIR, "fruit_classifier.pth")
 ARTIFACT_DIR = r"C:\Users\Dell\.gemini\antigravity\brain\23529b3d-8d1b-475d-9814-3acd373b3b56"
@@ -35,6 +35,7 @@ CLASS_NAMES = [
     "freshapples",
     "freshbanana",
     "freshoranges",
+    "notafruit",
     "rottenapples",
     "rottenbanana",
     "rottenoranges"
@@ -44,20 +45,21 @@ DISPLAY_NAMES = [
     "Fresh Apple",
     "Fresh Banana",
     "Fresh Orange",
+    "Not A Fruit",
     "Rotten Apple",
     "Rotten Banana",
     "Rotten Orange"
 ]
 
 class FruitModel(nn.Module):
-    def __init__(self, num_classes=6):
+    def __init__(self, num_classes=7):
         super().__init__()
         weights = models.MobileNet_V2_Weights.DEFAULT
         self.backbone = models.mobilenet_v2(weights=weights)
         
-        # Unfreeze all layers for fine-tuning
+        # Freeze backbone parameters for fast CPU transfer learning
         for param in self.backbone.parameters():
-            param.requires_grad = True
+            param.requires_grad = False
 
         in_feats = self.backbone.classifier[1].in_features
         self.features_extractor = self.backbone.features
@@ -100,7 +102,7 @@ def run_fine_tuning():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n--- [Step 2] Fine-Tuning MobileNetV2 on Official Kaggle Data (Device: {device}) ---")
 
-    # ImageNet Mean & Std Preprocessing
+    # ImageNet Mean & Std Preprocessing with Augmentations
     train_transform = transforms.Compose([
         transforms.Resize((150, 150)),
         transforms.RandomResizedCrop(150, scale=(0.8, 1.0)),
@@ -120,23 +122,21 @@ def run_fine_tuning():
     train_data = datasets.ImageFolder(train_dir, transform=train_transform)
     test_data = datasets.ImageFolder(test_dir, transform=eval_transform)
 
-    train_loader = DataLoader(train_data, batch_size=32, shuffle=True, num_workers=0)
-    test_loader = DataLoader(test_data, batch_size=32, shuffle=False, num_workers=0)
+    train_loader = DataLoader(train_data, batch_size=64, shuffle=True, num_workers=0)
+    test_loader = DataLoader(test_data, batch_size=64, shuffle=False, num_workers=0)
 
+    num_classes = len(train_data.classes)
+    print(f"[DATASET INFO] Discovered {num_classes} Classes: {train_data.classes}")
     print(f"[DATASET INFO] Training Images: {len(train_data)} | Test Images: {len(test_data)}")
 
-    model = FruitModel(num_classes=6).to(device)
+    model = FruitModel(num_classes=num_classes).to(device)
     
-    # Differential learning rates: smaller for backbone, larger for classifier head
-    optimizer = optim.AdamW([
-        {'params': model.backbone.features.parameters(), 'lr': 1e-4},
-        {'params': model.classifier.parameters(), 'lr': 1e-3}
-    ], weight_decay=1e-4)
+    optimizer = optim.AdamW(model.classifier.parameters(), lr=1e-3, weight_decay=1e-4)
 
-    epochs = 10
+    epochs = 3
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer,
-        max_lr=[1e-4, 1e-3],
+        max_lr=1e-3,
         epochs=epochs,
         steps_per_epoch=len(train_loader)
     )
@@ -182,6 +182,9 @@ def run_fine_tuning():
         if te_acc > best_test_acc:
             best_test_acc = te_acc
             torch.save(model.state_dict(), MODEL_SAVE_PATH)
+            models_dir_path = os.path.join(BASE_DIR, "models", "fruit_classifier.pth")
+            if os.path.exists(os.path.dirname(models_dir_path)):
+                torch.save(model.state_dict(), models_dir_path)
 
         print(f"Epoch [{epoch:02d}/{epochs}] "
               f"Train Loss: {tr_loss:.4f} | Train Acc: {tr_acc:.2f}% | "
@@ -222,10 +225,10 @@ def run_fine_tuning():
     ax = plt.gca()
     ax.set_facecolor('#1e293b')
 
-    colors = ['#10b981', '#f59e0b', '#38bdf8', '#ef4444', '#b45309', '#0369a1']
-    markers = ['o', 's', '^', 'X', 'D', 'v']
+    colors = ['#10b981', '#f59e0b', '#38bdf8', '#a855f7', '#ef4444', '#b45309', '#0369a1']
+    markers = ['o', 's', '^', '*', 'X', 'D', 'v']
 
-    for cls_i in range(6):
+    for cls_i in range(num_classes):
         idx = (targets_subset == cls_i)
         ax.scatter(
             feats_2d[idx, 0], feats_2d[idx, 1],
@@ -233,7 +236,7 @@ def run_fine_tuning():
             marker=markers[cls_i], s=70, alpha=0.85, edgecolors='white', linewidths=0.5
         )
 
-    ax.set_title(f"Official Kaggle Dataset - 2D Feature Representation Plane (Acc: {final_acc:.1f}%)", color='#38bdf8', fontsize=13, fontweight='bold', pad=15)
+    ax.set_title(f"7-Class Dataset - 2D Feature Representation Plane (Acc: {final_acc:.1f}%)", color='#38bdf8', fontsize=13, fontweight='bold', pad=15)
     ax.set_xlabel("Principal Feature Axis 1 (PCA Projection)", color='#94a3b8')
     ax.set_ylabel("Principal Feature Axis 2 (PCA Projection)", color='#94a3b8')
     ax.tick_params(colors='#94a3b8')
@@ -242,33 +245,46 @@ def run_fine_tuning():
     plt.legend(facecolor='#0f172a', edgecolor='#334155', labelcolor='#f8fafc', loc='upper right')
     plt.tight_layout()
 
+    docs_fig_dir = os.path.join(BASE_DIR, "docs", "figures")
+    os.makedirs(docs_fig_dir, exist_ok=True)
+
     plt.savefig(os.path.join(BASE_DIR, "classification_2d_plane.png"), dpi=150)
-    plt.savefig(os.path.join(ARTIFACT_DIR, "classification_2d_plane.png"), dpi=150)
+    plt.savefig(os.path.join(docs_fig_dir, "classification_2d_plane.png"), dpi=150)
+    plt.savefig(os.path.join(docs_fig_dir, "classification_2d_plane.svg"))
+    if os.path.exists(ARTIFACT_DIR):
+        plt.savefig(os.path.join(ARTIFACT_DIR, "classification_2d_plane.png"), dpi=150)
+        plt.savefig(os.path.join(ARTIFACT_DIR, "classification_2d_plane.svg"))
     plt.close()
 
     # --- Plot 2: Confusion Matrix ---
     cm = confusion_matrix(all_targets, all_preds)
 
-    plt.figure(figsize=(8, 6), facecolor='#0f172a')
+    plt.figure(figsize=(9, 7), facecolor='#0f172a')
     ax = plt.gca()
     ax.set_facecolor('#1e293b')
     ax.matshow(cm, cmap='Blues', alpha=0.85)
 
-    for i in range(6):
-        for j in range(6):
+    for i in range(num_classes):
+        for j in range(num_classes):
             ax.text(j, i, str(cm[i, j]), ha='center', va='center',
                     color='white' if cm[i, j] > cm.max()/2 else '#0f172a', fontweight='bold', fontsize=11)
 
-    ax.set_xticklabels([''] + DISPLAY_NAMES, rotation=35, ha='left', color='#94a3b8')
-    ax.set_yticklabels([''] + DISPLAY_NAMES, color='#94a3b8')
-    ax.set_title(f"Confusion Matrix - Official Kaggle Test Set (Acc: {final_acc:.1f}%)", color='#38bdf8', fontsize=13, fontweight='bold', pad=20)
+    ax.set_xticks(range(num_classes))
+    ax.set_yticks(range(num_classes))
+    ax.set_xticklabels(DISPLAY_NAMES, rotation=35, ha='left', color='#94a3b8')
+    ax.set_yticklabels(DISPLAY_NAMES, color='#94a3b8')
+    ax.set_title(f"Confusion Matrix - 7-Class Test Evaluation (Acc: {final_acc:.1f}%)", color='#38bdf8', fontsize=13, fontweight='bold', pad=20)
     plt.tight_layout()
 
     plt.savefig(os.path.join(BASE_DIR, "confusion_matrix.png"), dpi=150)
-    plt.savefig(os.path.join(ARTIFACT_DIR, "confusion_matrix.png"), dpi=150)
+    plt.savefig(os.path.join(docs_fig_dir, "confusion_matrix.png"), dpi=150)
+    plt.savefig(os.path.join(docs_fig_dir, "confusion_matrix.svg"))
+    if os.path.exists(ARTIFACT_DIR):
+        plt.savefig(os.path.join(ARTIFACT_DIR, "confusion_matrix.png"), dpi=150)
+        plt.savefig(os.path.join(ARTIFACT_DIR, "confusion_matrix.svg"))
     plt.close()
 
-    print("[SUCCESS] Fine-tuning complete & all diagnostic plots generated!")
+    print("[SUCCESS] Fine-tuning complete & 7-class SVG/PNG diagnostic plots generated!")
 
 if __name__ == "__main__":
     run_fine_tuning()
