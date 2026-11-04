@@ -111,12 +111,22 @@ def generate_all_figures():
     print(f"[+] Test Accuracy: {final_acc:.2f}%")
 
     # --- Figure 1: 2D Feature PCA Plane ---
-    print("[*] Generating 2D Feature Representation Plane SVG & PNG...")
-    pca = PCA(n_components=2)
-    feats_2d = pca.fit_transform(all_features[:1000])
-    targets_subset = all_targets[:1000]
+    print("[*] Generating 2D Feature Representation Plane SVG & PNG across all 7 classes...")
+    
+    # Balanced sampling across ALL 7 classes (up to 120 samples per class to represent all classes equally)
+    sample_indices = []
+    np.random.seed(42) # Deterministic reproducability
+    for cls_i in range(7):
+        cls_idx = np.where(all_targets == cls_i)[0]
+        chosen = np.random.choice(cls_idx, size=min(len(cls_idx), 120), replace=False)
+        sample_indices.extend(chosen)
 
-    fig, ax = plt.subplots(figsize=(10.5, 7.5), facecolor='#0f172a')
+    sample_indices = np.array(sample_indices)
+    pca = PCA(n_components=2)
+    feats_2d = pca.fit_transform(all_features[sample_indices])
+    targets_subset = all_targets[sample_indices]
+
+    fig, ax = plt.subplots(figsize=(11, 7.5), facecolor='#0f172a')
     ax.set_facecolor('#1e293b')
 
     colors = ['#10b981', '#f59e0b', '#38bdf8', '#a855f7', '#ef4444', '#b45309', '#0369a1']
@@ -136,7 +146,8 @@ def generate_all_figures():
     ax.tick_params(colors='#f8fafc', labelsize=10)
     ax.grid(True, linestyle='--', alpha=0.25, color='#475569')
 
-    plt.legend(facecolor='#0f172a', edgecolor='#334155', labelcolor='#f8fafc', loc='upper right', fontsize=10)
+    # Position legend outside or cleanly in corner
+    plt.legend(facecolor='#0f172a', edgecolor='#334155', labelcolor='#f8fafc', loc='upper right', fontsize=9.5)
     plt.tight_layout()
 
     plt.savefig(os.path.join(DOCS_FIG_DIR, "classification_2d_plane.png"), dpi=200, bbox_inches='tight')
